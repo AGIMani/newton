@@ -1,0 +1,41 @@
+{
+  "collision_boxes": [
+    {
+      "frame": "scene",
+      "friction": 1.0,
+      "name": "scene_collision_box",
+      "position": [
+        0.5698000192642212,
+        0.06700000166893005,
+        -0.5698000192642212
+      ],
+      "rpy_deg": [
+        -1.0099999904632568,
+        0.0,
+        0.0
+      ],
+      "size": [
+        0.39899998903274536,
+        0.4212999939918518,
+        0.0010000000474974513
+      ],
+      "type": "box",
+      "visible": false
+    }
+  ],
+  "format": "newton_scene_collision_boxes_v1",
+  "scene": {
+    "position": [
+      0.0,
+      -0.0184,
+      0.129
+    ],
+    "rpy_deg": [
+      0.0,
+      180.0,
+      0.0
+    ],
+    "scale": 1.0
+  },
+  "scene_glb": "../scene/scene.glb"
+}

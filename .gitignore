@@ -8,6 +8,9 @@ wheels/
 
 # Virtual Environments 
 .venv
+conda_envs/
+conda_pkgs/
+activate_newton.sh
 
 # Tool cache
 .cache/
@@ -74,3 +77,11 @@ docs/_static/viser/
 
 # Notebook checkpoints
 **/*.ipynb_checkpoints/
+
+assets/
+
+# Local debug artifacts and large scene assets
+/scene/*.glb
+/humanoid_recording.bin
+/my_output.usd
+/solver_convergence.png
