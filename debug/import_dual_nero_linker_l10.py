@@ -35,6 +35,7 @@ DEFAULT_D455_JSON = DEFAULT_HARNESS_ROOT / "assets" / "d455json.json"
 DEFAULT_D405_JSON = REPO_ROOT / "assets" / "d405json.json"
 DEFAULT_D405_MOUNT_JSON = REPO_ROOT / "assets" / "d405_mount_default.json"
 DEFAULT_OVERLAY_HAND_TRACE_PATH = REPO_ROOT / "logs" / "xr_debug" / "camera_overlay_hand.jsonl"
+DEFAULT_L10_BOTTLE_CONTACT_LOG = REPO_ROOT / "logs" / "vr_stack" / "l10_bottle_contacts.jsonl"
 URDF_UP_AXIS = "Z"
 D455_BODY_LABEL_SUFFIX = "/d455_body"
 D455_BODY_SIZE_FALLBACK = (0.026, 0.124, 0.029)
@@ -258,6 +259,10 @@ def _resolve_optional_file(path: Path) -> Path | None:
     file_path = path if path.is_absolute() else (Path.cwd() / path)
     file_path = file_path.resolve()
     return file_path if file_path.exists() else None
+
+
+def _resolve_output_path(path: Path) -> Path:
+    return (path if path.is_absolute() else (Path.cwd() / path)).resolve()
 
 
 def _image_size(value: str) -> tuple[int, int]:
@@ -500,6 +505,18 @@ def _rotation_from_quat_xyzw(quat: np.ndarray) -> np.ndarray:
         ),
         dtype=np.float64,
     )
+
+
+def _transform_point_from_body_q(body_q: np.ndarray, body_index: int, point: np.ndarray) -> np.ndarray:
+    point = np.asarray(point, dtype=np.float64).reshape(3)
+    if body_index < 0:
+        return point
+    body_pose = np.asarray(body_q[body_index], dtype=np.float64)
+    return body_pose[:3] + _rotation_from_quat_xyzw(body_pose[3:7]) @ point
+
+
+def _json_vec3(value: np.ndarray) -> list[float]:
+    return [float(v) for v in np.asarray(value, dtype=np.float64).reshape(3)]
 
 
 def _quat_xyzw_from_rotation(rotation: np.ndarray) -> tuple[float, float, float, float]:
@@ -1109,6 +1126,20 @@ class Example:
             if self.simulate_enabled
             else None
         )
+        self._l10_bottle_contact_frame = 0
+        self._l10_bottle_contact_log_file = None
+        self._l10_bottle_contact_log_path = _resolve_output_path(args.l10_bottle_contact_log_path)
+        self._shape_body_host = self.model.shape_body.numpy().copy()
+        self._l10_shape_indices = frozenset(
+            shape_index
+            for shape_index, body_index in enumerate(self._shape_body_host)
+            if 0 <= int(body_index) < len(self.model.body_label)
+            and _is_l10_hand_body_label(self.model.body_label[int(body_index)])
+        )
+        self._dynamic_bottle_collision_shape = (
+            int(self.dynamic_bottle_handles["collision_shape"]) if self.dynamic_bottle_handles is not None else -1
+        )
+        self._open_l10_bottle_contact_log()
 
         newton.eval_fk(self.model, self.model.joint_q, self.model.joint_qd, self.state_0)
         _assert_finite_state(self.state_0, "Initial FK")
@@ -1184,6 +1215,136 @@ class Example:
         elif self.teleop_robot is not None and hasattr(self.teleop_robot, "reset_relative_anchor"):
             self.teleop_robot.reset_relative_anchor()
         print("[newton-quest-teleop] scene reset to initial state", flush=True)
+
+    def _open_l10_bottle_contact_log(self) -> None:
+        self._l10_bottle_contact_log_path.parent.mkdir(parents=True, exist_ok=True)
+        self._l10_bottle_contact_log_file = self._l10_bottle_contact_log_path.open("w", encoding="utf-8")
+        atexit.register(self.close_l10_bottle_contact_log)
+        bottle_label = (
+            self.model.shape_label[self._dynamic_bottle_collision_shape]
+            if 0 <= self._dynamic_bottle_collision_shape < len(self.model.shape_label)
+            else "<missing>"
+        )
+        print(
+            "L10-bottle contact log:"
+            f" path={self._l10_bottle_contact_log_path}"
+            f" l10_shapes={len(self._l10_shape_indices)}"
+            f" bottle_shape={self._dynamic_bottle_collision_shape}"
+            f" bottle_label={bottle_label}",
+            flush=True,
+        )
+
+    def close_l10_bottle_contact_log(self) -> None:
+        if self._l10_bottle_contact_log_file is None:
+            return
+        self._l10_bottle_contact_log_file.close()
+        self._l10_bottle_contact_log_file = None
+
+    def _contact_shape_record(self, shape_index: int) -> dict[str, object]:
+        body_index = -1
+        if 0 <= shape_index < len(self._shape_body_host):
+            body_index = int(self._shape_body_host[shape_index])
+        body_label = "world"
+        if 0 <= body_index < len(self.model.body_label):
+            body_label = self.model.body_label[body_index]
+        return {
+            "index": int(shape_index),
+            "label": self.model.shape_label[shape_index] if 0 <= shape_index < len(self.model.shape_label) else "",
+            "body_index": int(body_index),
+            "body_label": body_label,
+            "is_l10": shape_index in self._l10_shape_indices,
+            "is_bottle": shape_index == self._dynamic_bottle_collision_shape,
+        }
+
+    def _log_l10_bottle_contacts(self) -> None:
+        log_file = self._l10_bottle_contact_log_file
+        if log_file is None or self.contacts is None or self.state_0.body_q is None:
+            return
+
+        raw_contact_count = int(self.contacts.rigid_contact_count.numpy()[0])
+        active_contact_count = min(raw_contact_count, int(self.contacts.rigid_contact_max))
+        body_q = self.state_0.body_q.numpy()
+        shape0 = self.contacts.rigid_contact_shape0.numpy()[:active_contact_count]
+        shape1 = self.contacts.rigid_contact_shape1.numpy()[:active_contact_count]
+        point0 = self.contacts.rigid_contact_point0.numpy()[:active_contact_count]
+        point1 = self.contacts.rigid_contact_point1.numpy()[:active_contact_count]
+        offset0 = self.contacts.rigid_contact_offset0.numpy()[:active_contact_count]
+        offset1 = self.contacts.rigid_contact_offset1.numpy()[:active_contact_count]
+        normal = self.contacts.rigid_contact_normal.numpy()[:active_contact_count]
+        margin0 = self.contacts.rigid_contact_margin0.numpy()[:active_contact_count]
+        margin1 = self.contacts.rigid_contact_margin1.numpy()[:active_contact_count]
+
+        records = []
+        for contact_index in range(active_contact_count):
+            shape_index0 = int(shape0[contact_index])
+            shape_index1 = int(shape1[contact_index])
+            shape0_is_l10 = shape_index0 in self._l10_shape_indices
+            shape1_is_l10 = shape_index1 in self._l10_shape_indices
+            shape0_is_bottle = shape_index0 == self._dynamic_bottle_collision_shape
+            shape1_is_bottle = shape_index1 == self._dynamic_bottle_collision_shape
+            if not ((shape0_is_l10 and shape1_is_bottle) or (shape1_is_l10 and shape0_is_bottle)):
+                continue
+
+            body0 = int(self._shape_body_host[shape_index0])
+            body1 = int(self._shape_body_host[shape_index1])
+            support0_world = _transform_point_from_body_q(body_q, body0, point0[contact_index])
+            support1_world = _transform_point_from_body_q(body_q, body1, point1[contact_index])
+            surface0_world = _transform_point_from_body_q(body_q, body0, point0[contact_index] + offset0[contact_index])
+            surface1_world = _transform_point_from_body_q(body_q, body1, point1[contact_index] + offset1[contact_index])
+
+            normal_shape0_to_shape1 = np.asarray(normal[contact_index], dtype=np.float64).reshape(3)
+            normal_norm = float(np.linalg.norm(normal_shape0_to_shape1))
+            if normal_norm > 0.0:
+                normal_shape0_to_shape1 = normal_shape0_to_shape1 / normal_norm
+            separation_m = float(
+                np.dot(normal_shape0_to_shape1, support1_world - support0_world)
+                - (float(margin0[contact_index]) + float(margin1[contact_index]))
+            )
+            l10_shape_index = shape_index0 if shape0_is_l10 else shape_index1
+            l10_body_index = int(self._shape_body_host[l10_shape_index])
+            l10_link_label = (
+                self.model.body_label[l10_body_index] if 0 <= l10_body_index < len(self.model.body_label) else ""
+            )
+            normal_l10_to_bottle = normal_shape0_to_shape1 if shape0_is_l10 else -normal_shape0_to_shape1
+
+            records.append(
+                {
+                    "contact_index": int(contact_index),
+                    "shape0": self._contact_shape_record(shape_index0),
+                    "shape1": self._contact_shape_record(shape_index1),
+                    "l10_link_label": l10_link_label,
+                    "l10_shape_index": int(l10_shape_index),
+                    "bottle_shape_index": int(self._dynamic_bottle_collision_shape),
+                    "world_point": _json_vec3(0.5 * (surface0_world + surface1_world)),
+                    "support_point0_world": _json_vec3(support0_world),
+                    "support_point1_world": _json_vec3(support1_world),
+                    "surface_point0_world": _json_vec3(surface0_world),
+                    "surface_point1_world": _json_vec3(surface1_world),
+                    "normal_shape0_to_shape1": _json_vec3(normal_shape0_to_shape1),
+                    "normal_l10_to_bottle": _json_vec3(normal_l10_to_bottle),
+                    "separation_m": separation_m,
+                    "penetration_m": max(0.0, -separation_m),
+                    "margin0_m": float(margin0[contact_index]),
+                    "margin1_m": float(margin1[contact_index]),
+                }
+            )
+
+        log_file.write(
+            json.dumps(
+                {
+                    "frame": int(self._l10_bottle_contact_frame),
+                    "time_s": float(self.sim_time),
+                    "raw_rigid_contact_count": int(raw_contact_count),
+                    "rigid_contact_capacity": int(self.contacts.rigid_contact_max),
+                    "contact_count": len(records),
+                    "contacts": records,
+                },
+                separators=(",", ":"),
+            )
+            + "\n"
+        )
+        log_file.flush()
+        self._l10_bottle_contact_frame += 1
 
     def capture(self) -> None:
         if wp.get_device().is_cuda:
@@ -1412,6 +1573,7 @@ class Example:
 
     def render(self) -> None:
         self.render_camera_previews()
+        self._log_l10_bottle_contacts()
 
         self.viewer.begin_frame(self.sim_time)
         self.viewer.log_state(self.state_0)
@@ -1638,6 +1800,7 @@ class Example:
 
     def test_final(self) -> None:
         _assert_finite_state(self.state_0, "Simulation")
+        self.close_l10_bottle_contact_log()
         self.close_quest_teleop()
 
     @staticmethod
@@ -1834,6 +1997,12 @@ class Example:
             type=Path,
             default=DEFAULT_DYNAMIC_BOTTLE_SPEC,
             help="Dynamic bottle JSON spec with a GLB visual and transparent cylinder collision.",
+        )
+        parser.add_argument(
+            "--l10-bottle-contact-log-path",
+            type=Path,
+            default=DEFAULT_L10_BOTTLE_CONTACT_LOG,
+            help="Required JSONL dump of per-frame L10 hand contacts against the dynamic bottle cylinder.",
         )
         parser.add_argument(
             "--dynamic-bottle-friction",
