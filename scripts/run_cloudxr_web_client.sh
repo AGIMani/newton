@@ -24,6 +24,11 @@ ok() { log "ok: $*"; }
 warn() { log "warn: $*"; }
 err() { log "error: $*" >&2; }
 
+WEBPACK_WATCH_ENV=(
+    CHOKIDAR_USEPOLLING="${CHOKIDAR_USEPOLLING:-true}"
+    WATCHPACK_POLLING="${WATCHPACK_POLLING:-true}"
+)
+
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --check-only) CHECK_ONLY=1; shift ;;
@@ -193,6 +198,8 @@ EOF
         --name "${CONTAINER_NAME}" \
         --network host \
         --user "$(id -u):$(id -g)" \
+        -e "CHOKIDAR_USEPOLLING=${CHOKIDAR_USEPOLLING:-true}" \
+        -e "WATCHPACK_POLLING=${WATCHPACK_POLLING:-true}" \
         -v "${IMPORTED_WEBXR_DIR}:/app/webxr_client" \
         --entrypoint sh \
         "${IMPORTED_IMAGE}" \
@@ -286,4 +293,4 @@ fi
 ok "open this in Quest: https://${HOST_IP}:8443/"
 log "48322 is only for certificate/WSS. If needed, accept: https://${HOST_IP}:48322/"
 log "starting local CloudXR Web Client; press Ctrl+C to stop"
-exec npx --prefix "${WEBXR_DIR}" webpack serve --config "${CONFIG_FILE}" --no-open
+exec env "${WEBPACK_WATCH_ENV[@]}" npx --prefix "${WEBXR_DIR}" webpack serve --config "${CONFIG_FILE}" --no-open

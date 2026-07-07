@@ -475,12 +475,22 @@ wait_for_https() {
     local url="$1"
     local label="$2"
     local timeout_s="$3"
+    local pid="${4:-}"
+    local log_path="${5:-}"
     local started
     started="$(date +%s)"
     while true; do
         if curl -kfsS --connect-timeout 2 "${url}" >/dev/null 2>&1; then
             ok "${label} is serving ${url}"
             return 0
+        fi
+        if [[ -n "${pid}" ]] && ! kill -0 "${pid}" >/dev/null 2>&1; then
+            err "${label} exited before serving ${url}"
+            if [[ -n "${log_path}" ]]; then
+                err "recent ${label} log:"
+                tail -80 "${log_path}" >&2 || true
+            fi
+            return 1
         fi
         if (( $(date +%s) - started >= timeout_s )); then
             err "${label} did not serve ${url} within ${timeout_s}s"
@@ -516,7 +526,7 @@ fi
 if [[ "${START_WEB}" -eq 1 ]]; then
     start_bg "cloudxr_web_client" env PYTHON_BIN="${TELEOP_PYTHON_BIN}" "${SCRIPT_DIR}/run_cloudxr_web_client.sh" --mode "${WEB_MODE}"
     web_pid="$(last_bg_pid)"
-    wait_for_https "https://127.0.0.1:8443/" "CloudXR web client" 120
+    wait_for_https "https://127.0.0.1:8443/" "CloudXR web client" 120 "${web_pid}" "${LOG_DIR}/cloudxr_web_client.log"
     require_bg_alive "cloudxr_web_client" "${web_pid}"
 else
     warn "skipping CloudXR web client"

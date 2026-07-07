@@ -17,6 +17,7 @@ import warp as wp
 
 import newton
 import newton.examples
+from newton.geometry import HydroelasticSDF
 from newton.sensors import SensorTiledCamera
 
 try:
@@ -95,6 +96,10 @@ SCENE_CONTACT_TORSIONAL_FRICTION = 0.03
 SCENE_CONTACT_ROLLING_FRICTION = 0.02
 BOTTLE_SCENE_COLLISION_CLEARANCE_M = 0.002
 BOTTLE_TABLE_GUARD_CLEARANCE_M = -5.0e-4
+HYDROELASTIC_CONTACT_GAP_M = 1.0e-2
+HYDROELASTIC_SDF_MAX_RESOLUTION = 64
+HYDROELASTIC_SDF_NARROW_BAND_RANGE = (-1.0e-2, 1.0e-2)
+HYDROELASTIC_KH = 1.0e11
 
 
 @dataclass
@@ -192,6 +197,56 @@ def _l10_finger_family_from_body_label(body_label: str) -> str | None:
     return None
 
 
+def _set_shape_hydroelastic_sdf(
+    builder: newton.ModelBuilder,
+    shape_index: int,
+    *,
+    gap: float,
+    sdf_max_resolution: int,
+    sdf_narrow_band_range: tuple[float, float],
+    kh: float,
+) -> None:
+    builder.shape_flags[shape_index] = int(builder.shape_flags[shape_index]) | int(newton.ShapeFlags.HYDROELASTIC)
+    builder.shape_margin[shape_index] = 0.0
+    builder.shape_gap[shape_index] = float(gap)
+    builder.shape_material_kh[shape_index] = float(kh)
+    builder.shape_sdf_max_resolution[shape_index] = int(sdf_max_resolution)
+    builder.shape_sdf_narrow_band_range[shape_index] = (
+        float(sdf_narrow_band_range[0]),
+        float(sdf_narrow_band_range[1]),
+    )
+
+
+def _build_mesh_sdf_for_hydroelastic_shape(
+    builder: newton.ModelBuilder,
+    shape_index: int,
+    *,
+    gap: float,
+    sdf_max_resolution: int,
+    sdf_narrow_band_range: tuple[float, float],
+) -> bool:
+    if builder.shape_type[shape_index] != newton.GeoType.MESH:
+        return False
+    mesh = builder.shape_source[shape_index]
+    if mesh is None:
+        return False
+    if getattr(mesh, "sdf", None) is not None:
+        return True
+
+    shape_scale = np.asarray(builder.shape_scale[shape_index], dtype=np.float32)
+    if not np.allclose(shape_scale, 1.0):
+        # SDFs are generated in mesh coordinates, so bake non-unit import scales.
+        mesh = mesh.copy(vertices=mesh.vertices * shape_scale, recompute_inertia=True)
+        builder.shape_source[shape_index] = mesh
+        builder.shape_scale[shape_index] = (1.0, 1.0, 1.0)
+    mesh.build_sdf(
+        max_resolution=int(sdf_max_resolution),
+        narrow_band_range=(float(sdf_narrow_band_range[0]), float(sdf_narrow_band_range[1])),
+        margin=float(gap),
+    )
+    return True
+
+
 def _filter_urdf_collisions_to_l10_hand(
     builder: newton.ModelBuilder,
     first_shape: int,
@@ -203,9 +258,16 @@ def _filter_urdf_collisions_to_l10_hand(
     l10_kf: float,
     l10_mu_torsional: float,
     l10_mu_rolling: float,
+    hydroelastic_contacts: bool,
+    hydroelastic_gap: float,
+    hydroelastic_sdf_max_resolution: int,
+    hydroelastic_sdf_narrow_band_range: tuple[float, float],
+    hydroelastic_kh: float,
 ) -> None:
     collision_mask = int(newton.ShapeFlags.COLLIDE_SHAPES) | int(newton.ShapeFlags.COLLIDE_PARTICLES)
     kept_l10 = 0
+    hydro_l10 = 0
+    hydro_mesh_sdfs = 0
     disabled_non_l10 = 0
 
     for shape_index in range(first_shape, last_shape):
@@ -225,6 +287,24 @@ def _filter_urdf_collisions_to_l10_hand(
             builder.shape_material_mu_rolling[shape_index] = float(l10_mu_rolling)
             builder.shape_margin[shape_index] = L10_CONTACT_MARGIN_M
             builder.shape_gap[shape_index] = L10_CONTACT_GAP_M
+            if hydroelastic_contacts:
+                _set_shape_hydroelastic_sdf(
+                    builder,
+                    shape_index,
+                    gap=hydroelastic_gap,
+                    sdf_max_resolution=hydroelastic_sdf_max_resolution,
+                    sdf_narrow_band_range=hydroelastic_sdf_narrow_band_range,
+                    kh=hydroelastic_kh,
+                )
+                if _build_mesh_sdf_for_hydroelastic_shape(
+                    builder,
+                    shape_index,
+                    gap=hydroelastic_gap,
+                    sdf_max_resolution=hydroelastic_sdf_max_resolution,
+                    sdf_narrow_band_range=hydroelastic_sdf_narrow_band_range,
+                ):
+                    hydro_mesh_sdfs += 1
+                hydro_l10 += 1
             kept_l10 += 1
             continue
 
@@ -239,6 +319,8 @@ def _filter_urdf_collisions_to_l10_hand(
         f" l10_ke={l10_ke:g}"
         f" margin={L10_CONTACT_MARGIN_M:g}"
         f" gap={L10_CONTACT_GAP_M:g}"
+        f" hydro_shapes={hydro_l10}"
+        f" hydro_mesh_sdfs={hydro_mesh_sdfs}"
     )
 
 
@@ -407,6 +489,19 @@ def _vec3(value: str) -> tuple[float, float, float]:
         return tuple(float(part) for part in parts)
     except ValueError as exc:
         raise argparse.ArgumentTypeError("expected numeric x,y,z") from exc
+
+
+def _float_range2(value: str) -> tuple[float, float]:
+    parts = tuple(part.strip() for part in str(value).split(",") if part.strip())
+    if len(parts) != 2:
+        raise argparse.ArgumentTypeError("expected min,max")
+    try:
+        lo, hi = (float(part) for part in parts)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("expected numeric min,max") from exc
+    if lo >= hi:
+        raise argparse.ArgumentTypeError("expected min < max")
+    return (lo, hi)
 
 
 def _axis_map(value: str) -> tuple[str, str, str]:
@@ -811,6 +906,11 @@ def _scene_collision_cfg(
     *,
     torsional_friction: float,
     rolling_friction: float,
+    hydroelastic_contacts: bool,
+    hydroelastic_gap: float,
+    hydroelastic_sdf_max_resolution: int,
+    hydroelastic_sdf_narrow_band_range: tuple[float, float],
+    hydroelastic_kh: float,
 ) -> newton.ModelBuilder.ShapeConfig:
     cfg = newton.ModelBuilder.ShapeConfig()
     cfg.density = 0.0
@@ -824,6 +924,15 @@ def _scene_collision_cfg(
     cfg.is_visible = False
     cfg.has_shape_collision = True
     cfg.has_particle_collision = True
+    if hydroelastic_contacts:
+        cfg.is_hydroelastic = True
+        cfg.gap = float(hydroelastic_gap)
+        cfg.kh = float(hydroelastic_kh)
+        cfg.sdf_max_resolution = int(hydroelastic_sdf_max_resolution)
+        cfg.sdf_narrow_band_range = (
+            float(hydroelastic_sdf_narrow_band_range[0]),
+            float(hydroelastic_sdf_narrow_band_range[1]),
+        )
     return cfg
 
 
@@ -878,7 +987,13 @@ def _add_scene_collision_boxes(
     scene_scale: tuple[float, float, float],
     torsional_friction: float,
     rolling_friction: float,
+    hydroelastic_contacts: bool,
+    hydroelastic_gap: float,
+    hydroelastic_sdf_max_resolution: int,
+    hydroelastic_sdf_narrow_band_range: tuple[float, float],
+    hydroelastic_kh: float,
 ) -> None:
+    hydro_count = 0
     for index, box in enumerate(boxes):
         box_world_pos, box_world_rotation, box_size = _scene_collision_box_world_pose(
             box,
@@ -900,10 +1015,19 @@ def _add_scene_collision_boxes(
                 box.friction,
                 torsional_friction=torsional_friction,
                 rolling_friction=rolling_friction,
+                hydroelastic_contacts=hydroelastic_contacts,
+                hydroelastic_gap=hydroelastic_gap,
+                hydroelastic_sdf_max_resolution=hydroelastic_sdf_max_resolution,
+                hydroelastic_sdf_narrow_band_range=hydroelastic_sdf_narrow_band_range,
+                hydroelastic_kh=hydroelastic_kh,
             ),
             color=(1.0, 0.72, 0.15),
             label=f"{box.name}_{index:02d}",
         )
+        if hydroelastic_contacts:
+            hydro_count += 1
+    if hydroelastic_contacts:
+        print(f"Scene collision hydroelastic boxes: {hydro_count}")
 
 
 def _configure_dynamic_bottle_collision(
@@ -914,12 +1038,26 @@ def _configure_dynamic_bottle_collision(
     gap: float,
     torsional_friction: float,
     rolling_friction: float,
+    hydroelastic_contacts: bool,
+    hydroelastic_gap: float,
+    hydroelastic_sdf_max_resolution: int,
+    hydroelastic_sdf_narrow_band_range: tuple[float, float],
+    hydroelastic_kh: float,
 ) -> None:
     shape_index = int(handles["collision_shape"])
     builder.shape_margin[shape_index] = float(margin)
     builder.shape_gap[shape_index] = float(gap)
     builder.shape_material_mu_torsional[shape_index] = float(torsional_friction)
     builder.shape_material_mu_rolling[shape_index] = float(rolling_friction)
+    if hydroelastic_contacts:
+        _set_shape_hydroelastic_sdf(
+            builder,
+            shape_index,
+            gap=hydroelastic_gap,
+            sdf_max_resolution=hydroelastic_sdf_max_resolution,
+            sdf_narrow_band_range=hydroelastic_sdf_narrow_band_range,
+            kh=hydroelastic_kh,
+        )
 
 
 def _shape_cfg(
@@ -928,6 +1066,11 @@ def _shape_cfg(
     friction: float,
     visible: bool = True,
     colliding: bool = True,
+    hydroelastic_contacts: bool = False,
+    hydroelastic_gap: float = HYDROELASTIC_CONTACT_GAP_M,
+    hydroelastic_sdf_max_resolution: int = HYDROELASTIC_SDF_MAX_RESOLUTION,
+    hydroelastic_sdf_narrow_band_range: tuple[float, float] = HYDROELASTIC_SDF_NARROW_BAND_RANGE,
+    hydroelastic_kh: float = HYDROELASTIC_KH,
 ) -> newton.ModelBuilder.ShapeConfig:
     cfg = newton.ModelBuilder.ShapeConfig()
     cfg.density = float(density)
@@ -941,6 +1084,15 @@ def _shape_cfg(
     cfg.is_visible = bool(visible)
     cfg.has_shape_collision = bool(colliding)
     cfg.has_particle_collision = bool(colliding)
+    if hydroelastic_contacts and colliding:
+        cfg.is_hydroelastic = True
+        cfg.gap = float(hydroelastic_gap)
+        cfg.kh = float(hydroelastic_kh)
+        cfg.sdf_max_resolution = int(hydroelastic_sdf_max_resolution)
+        cfg.sdf_narrow_band_range = (
+            float(hydroelastic_sdf_narrow_band_range[0]),
+            float(hydroelastic_sdf_narrow_band_range[1]),
+        )
     if not colliding:
         cfg.collision_group = 0
     return cfg
@@ -970,12 +1122,28 @@ def _build_dynamic_box_object(
     gap: float,
     torsional_friction: float,
     rolling_friction: float,
+    hydroelastic_contacts: bool,
+    hydroelastic_gap: float,
+    hydroelastic_sdf_max_resolution: int,
+    hydroelastic_sdf_narrow_band_range: tuple[float, float],
+    hydroelastic_kh: float,
 ) -> dict[str, int | list[int]]:
     hx, hy, hz = (float(v) for v in proxy.half_extents)
     volume = max(8.0 * hx * hy * hz, 1.0e-9)
-    cfg = _shape_cfg(density=float(proxy.mass) / volume, friction=float(proxy.friction), visible=True, colliding=True)
+    cfg = _shape_cfg(
+        density=float(proxy.mass) / volume,
+        friction=float(proxy.friction),
+        visible=True,
+        colliding=True,
+        hydroelastic_contacts=hydroelastic_contacts,
+        hydroelastic_gap=hydroelastic_gap,
+        hydroelastic_sdf_max_resolution=hydroelastic_sdf_max_resolution,
+        hydroelastic_sdf_narrow_band_range=hydroelastic_sdf_narrow_band_range,
+        hydroelastic_kh=hydroelastic_kh,
+    )
     cfg.margin = float(margin)
-    cfg.gap = float(gap)
+    if not hydroelastic_contacts:
+        cfg.gap = float(gap)
     cfg.mu_torsional = float(torsional_friction)
     cfg.mu_rolling = float(rolling_friction)
     body = builder.add_body(
@@ -1361,6 +1529,11 @@ class Example:
             l10_kf=args.l10_contact_kf,
             l10_mu_torsional=args.l10_torsional_friction,
             l10_mu_rolling=args.l10_rolling_friction,
+            hydroelastic_contacts=bool(args.hydroelastic_contacts),
+            hydroelastic_gap=float(args.hydroelastic_contact_gap),
+            hydroelastic_sdf_max_resolution=int(args.hydroelastic_sdf_max_resolution),
+            hydroelastic_sdf_narrow_band_range=tuple(args.hydroelastic_sdf_narrow_band_range),
+            hydroelastic_kh=float(args.hydroelastic_kh),
         )
         _set_initial_arm_poses(
             builder,
@@ -1427,6 +1600,11 @@ class Example:
                 scene_scale=tuple(self.scene_scale),
                 torsional_friction=args.scene_torsional_friction,
                 rolling_friction=args.scene_rolling_friction,
+                hydroelastic_contacts=bool(args.hydroelastic_contacts),
+                hydroelastic_gap=float(args.hydroelastic_contact_gap),
+                hydroelastic_sdf_max_resolution=int(args.hydroelastic_sdf_max_resolution),
+                hydroelastic_sdf_narrow_band_range=tuple(args.hydroelastic_sdf_narrow_band_range),
+                hydroelastic_kh=float(args.hydroelastic_kh),
             )
             print(
                 "Loaded scene collision boxes:"
@@ -1490,6 +1668,11 @@ class Example:
                     gap=args.dynamic_bottle_contact_gap,
                     torsional_friction=args.dynamic_bottle_torsional_friction,
                     rolling_friction=args.dynamic_bottle_rolling_friction,
+                    hydroelastic_contacts=bool(args.hydroelastic_contacts),
+                    hydroelastic_gap=float(args.hydroelastic_contact_gap),
+                    hydroelastic_sdf_max_resolution=int(args.hydroelastic_sdf_max_resolution),
+                    hydroelastic_sdf_narrow_band_range=tuple(args.hydroelastic_sdf_narrow_band_range),
+                    hydroelastic_kh=float(args.hydroelastic_kh),
                 )
             elif dynamic_bottle_spec is not None:
                 self.dynamic_bottle_handles = build_dynamic_bottle(builder, dynamic_bottle_spec)
@@ -1500,6 +1683,11 @@ class Example:
                     gap=args.dynamic_bottle_contact_gap,
                     torsional_friction=args.dynamic_bottle_torsional_friction,
                     rolling_friction=args.dynamic_bottle_rolling_friction,
+                    hydroelastic_contacts=bool(args.hydroelastic_contacts),
+                    hydroelastic_gap=float(args.hydroelastic_contact_gap),
+                    hydroelastic_sdf_max_resolution=int(args.hydroelastic_sdf_max_resolution),
+                    hydroelastic_sdf_narrow_band_range=tuple(args.hydroelastic_sdf_narrow_band_range),
+                    hydroelastic_kh=float(args.hydroelastic_kh),
                 )
             if dynamic_object_proxy is not None and args.enforce_bottle_above_scene_collision:
                 self._bottle_table_guard = _bottle_table_guard_from_scene_collision(
@@ -1555,7 +1743,29 @@ class Example:
         self.state_0 = self.model.state()
         self.state_1 = self.model.state()
         self.control = self.model.control()
-        self.contacts = self.model.contacts()
+        self.collision_pipeline = None
+        if args.hydroelastic_contacts:
+            hydroelastic_config = HydroelasticSDF.Config(output_contact_surface=hasattr(self.viewer, "renderer"))
+            self.collision_pipeline = newton.CollisionPipeline(
+                self.model,
+                reduce_contacts=True,
+                broad_phase="explicit",
+                rigid_contact_max=args.hydroelastic_rigid_contact_max,
+                sdf_hydroelastic_config=hydroelastic_config,
+            )
+            self.contacts = self.collision_pipeline.contacts()
+            print(
+                "Hydroelastic contact pipeline:"
+                f" enabled=True"
+                f" gap={args.hydroelastic_contact_gap:g}"
+                f" sdf_max_resolution={args.hydroelastic_sdf_max_resolution}"
+                f" narrow_band={tuple(args.hydroelastic_sdf_narrow_band_range)}"
+                f" kh={args.hydroelastic_kh:g}"
+                f" rigid_contact_max={args.hydroelastic_rigid_contact_max}"
+            )
+        else:
+            self.contacts = self.model.contacts()
+            print("Hydroelastic contact pipeline: enabled=False")
         self.solver = None
         if self.simulate_enabled:
             if args.solver_backend == "mujoco":
@@ -1565,11 +1775,19 @@ class Example:
                     solver="newton",
                     integrator="implicitfast",
                     cone="elliptic",
-                    njmax=500,
-                    nconmax=500,
+                    njmax=args.mujoco_njmax,
+                    nconmax=args.mujoco_nconmax,
                     iterations=args.mujoco_solver_iterations,
                     ls_iterations=args.mujoco_ls_iterations,
                     impratio=args.mujoco_impratio,
+                )
+                print(
+                    "MuJoCo solver:"
+                    f" njmax={args.mujoco_njmax}"
+                    f" nconmax={args.mujoco_nconmax}"
+                    f" iterations={args.mujoco_solver_iterations}"
+                    f" ls_iterations={args.mujoco_ls_iterations}"
+                    f" impratio={args.mujoco_impratio:g}"
                 )
             elif args.solver_backend == "xpbd":
                 print(
@@ -1662,7 +1880,7 @@ class Example:
         self.control.clear()
         self.control.joint_target_q = wp.clone(joint_q)
         self.control.joint_target_qd = wp.clone(joint_qd)
-        self.contacts = self.model.contacts()
+        self.contacts = self.collision_pipeline.contacts() if self.collision_pipeline is not None else self.model.contacts()
         self.model.bvh_refit_shapes(self.state_0)
         if self.model.particle_count:
             self.model.bvh_refit_particles(self.state_0)
@@ -1885,7 +2103,10 @@ class Example:
 
             refresh_contacts = (substep % self.update_step_interval) == 0
             if refresh_contacts:
-                self.model.collide(self.state_0, self.contacts)
+                if self.collision_pipeline is not None:
+                    self.collision_pipeline.collide(self.state_0, self.contacts)
+                else:
+                    self.model.collide(self.state_0, self.contacts)
 
             if self.solver is None:
                 continue
@@ -2106,6 +2327,15 @@ class Example:
         self.viewer.begin_frame(self.sim_time)
         self.viewer.log_state(self.state_0)
         self.viewer.log_contacts(self.contacts, self.state_0)
+        if (
+            self.collision_pipeline is not None
+            and getattr(self.collision_pipeline, "hydroelastic_sdf", None) is not None
+            and hasattr(self.viewer, "log_hydro_contact_surface")
+        ):
+            self.viewer.log_hydro_contact_surface(
+                self.collision_pipeline.hydroelastic_sdf.get_contact_surface(),
+                penetrating_only=True,
+            )
         self.viewer.end_frame()
 
     def setup_camera_previews(self, args) -> None:
@@ -2396,6 +2626,54 @@ class Example:
             type=float,
             default=1000.0,
             help="MuJoCo constraint impedance ratio for elliptic friction cones.",
+        )
+        parser.add_argument(
+            "--mujoco-njmax",
+            type=int,
+            default=4096,
+            help="MuJoCo maximum scalar constraint rows. Increase if hydroelastic contacts report nefc overflow.",
+        )
+        parser.add_argument(
+            "--mujoco-nconmax",
+            type=int,
+            default=4096,
+            help="MuJoCo maximum contact count. Increase if hydroelastic contacts exceed the default capacity.",
+        )
+        parser.add_argument(
+            "--hydroelastic-contacts",
+            action=argparse.BooleanOptionalAction,
+            default=True,
+            help="Use the SDF hydroelastic collision pipeline for L10 hand, dynamic bottle/object, and table contacts.",
+        )
+        parser.add_argument(
+            "--hydroelastic-contact-gap",
+            type=float,
+            default=HYDROELASTIC_CONTACT_GAP_M,
+            help="Hydroelastic SDF contact gap [m].",
+        )
+        parser.add_argument(
+            "--hydroelastic-sdf-max-resolution",
+            type=int,
+            default=HYDROELASTIC_SDF_MAX_RESOLUTION,
+            help="Maximum SDF resolution for hydroelastic contact shapes.",
+        )
+        parser.add_argument(
+            "--hydroelastic-sdf-narrow-band-range",
+            type=_float_range2,
+            default=HYDROELASTIC_SDF_NARROW_BAND_RANGE,
+            help="Hydroelastic SDF narrow-band range, formatted min,max [m].",
+        )
+        parser.add_argument(
+            "--hydroelastic-kh",
+            type=float,
+            default=HYDROELASTIC_KH,
+            help="Hydroelastic contact stiffness parameter.",
+        )
+        parser.add_argument(
+            "--hydroelastic-rigid-contact-max",
+            type=int,
+            default=4096,
+            help="Rigid contact capacity for the hydroelastic collision pipeline.",
         )
         parser.add_argument(
             "--rigid-gap",

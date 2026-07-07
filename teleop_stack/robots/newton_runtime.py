@@ -799,8 +799,25 @@ class NewtonRuntimeRobotInterface(RobotInterface):
         self._joint_qd_host = self._target_joint_qd_host.copy()
 
     def _sync_live_joint_state(self) -> None:
-        self._joint_q_host = self.example.state_0.joint_q.numpy().copy()
-        self._joint_qd_host = self.example.state_0.joint_qd.numpy().copy()
+        joint_q = self.example.state_0.joint_q.numpy().copy()
+        joint_qd = self.example.state_0.joint_qd.numpy().copy()
+        if not np.isfinite(joint_q).all() or not np.isfinite(joint_qd).all():
+            print("[newton-quest-teleop] warning: non-finite Newton joint state; resetting scene", flush=True)
+            reset_scene = getattr(self.example, "reset_scene_to_initial", None)
+            if callable(reset_scene):
+                reset_scene()
+                joint_q = self.example.state_0.joint_q.numpy().copy()
+                joint_qd = self.example.state_0.joint_qd.numpy().copy()
+
+        if not np.isfinite(joint_q).all() or not np.isfinite(joint_qd).all():
+            if self._target_joint_q_host is not None and np.isfinite(self._target_joint_q_host).all():
+                joint_q = self._target_joint_q_host.copy()
+                joint_qd = np.zeros_like(self._target_joint_qd_host) if self._target_joint_qd_host is not None else joint_qd
+            else:
+                raise ValueError("Newton live joint state is non-finite and no finite target fallback is available")
+
+        self._joint_q_host = joint_q
+        self._joint_qd_host = joint_qd
         if self._kinematics is not None:
             self._kinematics.sync_joint_q(self._joint_q_host)
 

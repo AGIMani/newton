@@ -12,6 +12,7 @@
 <i> [webpack-dev-server] On Your Network (IPv4): https://192.168.8.100:8443/
 <i> [webpack-dev-server] On Your Network (IPv6): https://[fd7a:115c:a1e0::a63b:bb26]:8443/
 <i> [webpack-dev-server] Content not from webpack is served from '/app/webxr_client/build, /app/webxr_client/public' directory
+<i> [webpack-dev-middleware] wait until bundle finished: /
 assets by status 17.8 MiB [cached] 9 assets
 assets by path npm/@webxr-input-profiles/assets@1.0.19/dist/profiles/ 9.08 MiB 23 assets
 assets by path *.svg 2.15 KiB
@@ -21,24 +22,16 @@ assets by path *.svg 2.15 KiB
   asset play-circle.svg 402 bytes [compared for emit] [from: public/play-circle.svg] [copied]
   asset arrow-uturn-left.svg 380 bytes [compared for emit] [from: public/arrow-uturn-left.svg] [copied]
 assets by status 35.7 MiB [emitted]
-  asset bundle.4cb1d8aa.js 35.7 MiB [emitted] [immutable] (name: main)
+  asset bundle.01ff61ca.js 35.7 MiB [emitted] [immutable] (name: main)
   asset index.html 33.3 KiB [emitted] [compared for emit]
 asset favicon.ico 13.9 KiB [compared for emit] [from: favicon.ico] [copied]
 asset HEROICONS_LICENSE 1.05 KiB [compared for emit] [from: public/HEROICONS_LICENSE] [copied]
 cached modules 22 MiB (javascript) 40.9 KiB (asset) [cached] 2302 modules
 runtime modules 33.1 KiB 17 modules
 ./src/BuildInfoOverlay.tsx 1.5 KiB [built] [code generated]
-webpack 5.107.2 compiled successfully in 3538 ms
+webpack 5.107.2 compiled successfully in 3317 ms
 <i> [webpack-dev-server] [HPM] Upgrading to WebSocket
 (node:21) [DEP0060] DeprecationWarning: The `util._extend` API is deprecated. Please use Object.assign() instead.
 (Use `node --trace-deprecation ...` to show where the warning was created)
-npm error path /app/webxr_client
-npm error command failed
-npm error signal SIGTERM
-npm error command sh -c "webpack" serve --config webpack.newton.local.js --no-open
-npm notice
-npm notice New minor version of npm available! 11.13.0 -> 11.18.0
-npm notice Changelog: https://github.com/npm/cli/releases/tag/v11.18.0
-npm notice To update run: npm install -g npm@11.18.0
-npm notice
-npm error A complete log of this run can be found in: /app/.npm/_logs/2026-07-07T08_07_29_453Z-debug-0.log
+
+got 3 SIGTERM/SIGINTs, forcefully exiting
