@@ -83,6 +83,9 @@ L10_CONTACT_KD = 1.5e3
 L10_CONTACT_KF = 2.5e2
 L10_CONTACT_MARGIN_M = -1.0e-3
 L10_CONTACT_GAP_M = 3.0e-3
+L10_BOTTLE_CONTACT_STOP_PENETRATION_M = 2.0e-3
+L10_BOTTLE_CONTACT_STOP_RELEASE_M = 8.0e-4
+L10_BOTTLE_CONTACT_STOP_RETREAT_RAD = 1.0e-2
 DYNAMIC_BOTTLE_CONTACT_MARGIN_M = 0.0
 DYNAMIC_BOTTLE_CONTACT_GAP_M = 5.0e-4
 DYNAMIC_BOTTLE_CONTACT_TORSIONAL_FRICTION = 0.03
@@ -161,6 +164,19 @@ def _print_model_summary(model: newton.Model) -> None:
 def _is_l10_hand_body_label(body_label: str) -> bool:
     link_name = body_label.rsplit("/", maxsplit=1)[-1].lower()
     return link_name.startswith(("right_l10_", "left_l10_"))
+
+
+def _l10_finger_family_from_body_label(body_label: str) -> str | None:
+    link_name = str(body_label).rsplit("/", maxsplit=1)[-1].lower()
+    for side in ("right", "left"):
+        prefix = f"{side}_l10_"
+        if link_name.startswith(prefix):
+            link_name = link_name[len(prefix) :]
+            break
+    for family in ("thumb", "index", "middle", "ring", "pinky"):
+        if link_name.startswith(f"{family}_"):
+            return family
+    return None
 
 
 def _filter_urdf_collisions_to_l10_hand(
@@ -1147,6 +1163,11 @@ class Example:
         self.teleop_exit_requested = False
         self._teleop_session_entered = False
         self._bottle_table_guard: BottleTableGuard | None = None
+        self.l10_bottle_contact_stop_enabled = bool(args.l10_bottle_contact_stop)
+        self.l10_bottle_contact_stop_threshold_m = max(0.0, float(args.l10_bottle_contact_stop_penetration))
+        self.l10_bottle_contact_stop_release_m = max(0.0, float(args.l10_bottle_contact_stop_release))
+        self._l10_bottle_contact_stop_fingers: set[str] = set()
+        self._l10_bottle_contact_max_penetration_by_finger: dict[str, float] = {}
 
         urdf_path = _resolve_urdf(args.urdf)
         builder = newton.ModelBuilder(up_axis=URDF_UP_AXIS, gravity=args.gravity)
@@ -1409,6 +1430,8 @@ class Example:
         if self.model.particle_count:
             self.model.bvh_refit_particles(self.state_0)
         self.sim_time = 0.0
+        self._l10_bottle_contact_stop_fingers.clear()
+        self._l10_bottle_contact_max_penetration_by_finger.clear()
 
         if self.teleop_robot is not None and hasattr(self.teleop_robot, "reset_to_scene_state"):
             self.teleop_robot.reset_to_scene_state()
@@ -1431,6 +1454,13 @@ class Example:
             f" l10_shapes={len(self._l10_shape_indices)}"
             f" bottle_shape={self._dynamic_bottle_collision_shape}"
             f" bottle_label={bottle_label}",
+            flush=True,
+        )
+        print(
+            "L10-bottle contact stop:"
+            f" enabled={self.l10_bottle_contact_stop_enabled}"
+            f" threshold={self.l10_bottle_contact_stop_threshold_m:g}m"
+            f" release={self.l10_bottle_contact_stop_release_m:g}m",
             flush=True,
         )
 
@@ -1459,6 +1489,7 @@ class Example:
     def _log_l10_bottle_contacts(self) -> None:
         log_file = self._l10_bottle_contact_log_file
         if log_file is None or self.contacts is None or self.state_0.body_q is None:
+            self._update_l10_bottle_contact_stop({})
             return
 
         raw_contact_count = int(self.contacts.rigid_contact_count.numpy()[0])
@@ -1475,6 +1506,7 @@ class Example:
         margin1 = self.contacts.rigid_contact_margin1.numpy()[:active_contact_count]
 
         records = []
+        max_penetration_by_finger: dict[str, float] = {}
         for contact_index in range(active_contact_count):
             shape_index0 = int(shape0[contact_index])
             shape_index1 = int(shape1[contact_index])
@@ -1506,6 +1538,13 @@ class Example:
                 self.model.body_label[l10_body_index] if 0 <= l10_body_index < len(self.model.body_label) else ""
             )
             normal_l10_to_bottle = normal_shape0_to_shape1 if shape0_is_l10 else -normal_shape0_to_shape1
+            penetration_m = max(0.0, -separation_m)
+            finger_family = _l10_finger_family_from_body_label(l10_link_label)
+            if finger_family is not None:
+                max_penetration_by_finger[finger_family] = max(
+                    max_penetration_by_finger.get(finger_family, 0.0),
+                    penetration_m,
+                )
 
             records.append(
                 {
@@ -1523,12 +1562,13 @@ class Example:
                     "normal_shape0_to_shape1": _json_vec3(normal_shape0_to_shape1),
                     "normal_l10_to_bottle": _json_vec3(normal_l10_to_bottle),
                     "separation_m": separation_m,
-                    "penetration_m": max(0.0, -separation_m),
+                    "penetration_m": penetration_m,
                     "margin0_m": float(margin0[contact_index]),
                     "margin1_m": float(margin1[contact_index]),
                 }
             )
 
+        self._update_l10_bottle_contact_stop(max_penetration_by_finger)
         log_file.write(
             json.dumps(
                 {
@@ -1545,6 +1585,25 @@ class Example:
         )
         log_file.flush()
         self._l10_bottle_contact_frame += 1
+
+    def _update_l10_bottle_contact_stop(self, max_penetration_by_finger: dict[str, float]) -> None:
+        self._l10_bottle_contact_max_penetration_by_finger = dict(max_penetration_by_finger)
+        if not self.l10_bottle_contact_stop_enabled:
+            self._l10_bottle_contact_stop_fingers.clear()
+            return
+
+        release_m = min(self.l10_bottle_contact_stop_release_m, self.l10_bottle_contact_stop_threshold_m)
+        stopped = set(self._l10_bottle_contact_stop_fingers)
+        for finger in ("thumb", "index", "middle", "ring", "pinky"):
+            penetration_m = float(max_penetration_by_finger.get(finger, 0.0))
+            if penetration_m >= self.l10_bottle_contact_stop_threshold_m:
+                stopped.add(finger)
+            elif penetration_m <= release_m:
+                stopped.discard(finger)
+        self._l10_bottle_contact_stop_fingers = stopped
+
+    def l10_bottle_contact_stop_fingers(self) -> set[str]:
+        return set(self._l10_bottle_contact_stop_fingers)
 
     def _enforce_bottle_above_scene_collision(self, state) -> None:
         guard = self._bottle_table_guard
@@ -1658,6 +1717,8 @@ class Example:
                 finite_difference_rad=float(args.teleop_finite_difference_rad),
                 hand_max_joint_step_rad=float(args.teleop_hand_max_joint_step_rad),
                 hand_publish_kinematic_velocity=bool(args.teleop_hand_publish_kinematic_velocity),
+                hand_contact_stop_enabled=bool(args.l10_bottle_contact_stop),
+                hand_contact_stop_retreat_rad=float(args.l10_bottle_contact_stop_retreat_rad),
                 mapping=mapping,
                 ik_config_overrides={
                     "max_task_step_m": float(args.teleop_ik_max_task_step_m),
@@ -2243,6 +2304,30 @@ class Example:
             type=Path,
             default=DEFAULT_L10_BOTTLE_CONTACT_LOG,
             help="Required JSONL dump of per-frame L10 hand contacts against the dynamic bottle cylinder.",
+        )
+        parser.add_argument(
+            "--l10-bottle-contact-stop",
+            action=argparse.BooleanOptionalAction,
+            default=True,
+            help="Stop L10 finger closing targets when that finger penetrates the dynamic bottle.",
+        )
+        parser.add_argument(
+            "--l10-bottle-contact-stop-penetration",
+            type=float,
+            default=L10_BOTTLE_CONTACT_STOP_PENETRATION_M,
+            help="Per-finger L10-bottle penetration threshold [m] that blocks further closing.",
+        )
+        parser.add_argument(
+            "--l10-bottle-contact-stop-release",
+            type=float,
+            default=L10_BOTTLE_CONTACT_STOP_RELEASE_M,
+            help="Per-finger L10-bottle penetration threshold [m] below which closing is released.",
+        )
+        parser.add_argument(
+            "--l10-bottle-contact-stop-retreat-rad",
+            type=float,
+            default=L10_BOTTLE_CONTACT_STOP_RETREAT_RAD,
+            help="Joint retreat [rad] applied when a blocked L10 finger command still tries to close.",
         )
         parser.add_argument(
             "--dynamic-bottle-friction",

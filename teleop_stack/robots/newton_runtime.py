@@ -64,6 +64,8 @@ class NewtonRuntimeRobotConfig:
     finite_difference_rad: float = 1.0e-4
     hand_max_joint_step_rad: float = 0.0
     hand_publish_kinematic_velocity: bool = True
+    hand_contact_stop_enabled: bool = True
+    hand_contact_stop_retreat_rad: float = 0.01
     mapping: NeroTeleopMappingConfig = field(default_factory=NeroTeleopMappingConfig)
     ik_config_overrides: dict[str, object] = field(default_factory=dict)
 
@@ -185,6 +187,8 @@ class NewtonRuntimeRobotInterface(RobotInterface):
         self._arm_joint_qd_indices: tuple[int, ...] = ()
         self._joint_q_index_by_label: dict[str, int] = {}
         self._joint_qd_index_by_label: dict[str, int] = {}
+        self._hand_closing_direction_by_joint: dict[str, float] = {}
+        self._hand_joint_limits_by_joint: dict[str, tuple[float, float]] = {}
         self._kinematics: NewtonLinkKinematicsModel | None = None
         self._ik: FullPoseDifferentialIkController | None = None
         self._last_hand_debug: dict[str, object] | None = None
@@ -210,6 +214,8 @@ class NewtonRuntimeRobotInterface(RobotInterface):
         self._joint_q_host = self.example.state_0.joint_q.numpy().copy()
         self._joint_qd_host = self.example.state_0.joint_qd.numpy().copy()
         self._joint_q_index_by_label, self._joint_qd_index_by_label = _joint_scalar_index_maps(model)
+        self._hand_closing_direction_by_joint = _l10_closing_direction_by_joint()
+        self._hand_joint_limits_by_joint = _l10_joint_limits_by_joint()
         self._arm_joint_q_indices = _arm_joint_indices(self._joint_q_index_by_label, self.config.arm_side)
         self._arm_joint_qd_indices = _arm_joint_indices(self._joint_qd_index_by_label, self.config.arm_side)
         self._kinematics = NewtonLinkKinematicsModel(
@@ -696,6 +702,11 @@ class NewtonRuntimeRobotInterface(RobotInterface):
             target_value = float(value)
             if max_step > 0.0:
                 target_value = float(np.clip(target_value, current_value - max_step, current_value + max_step))
+            target_value = self._clamp_hand_target_for_bottle_contact(
+                str(joint_name),
+                current_value=current_value,
+                target_value=target_value,
+            )
             self._joint_q_host[int(q_index)] = target_value
             qd_index = self._joint_qd_index_by_label.get(label_suffix)
             if qd_index is not None:
@@ -704,6 +715,42 @@ class NewtonRuntimeRobotInterface(RobotInterface):
                 else:
                     hand_qd = 0.0
                 self._joint_qd_host[int(qd_index)] = hand_qd
+
+    def _clamp_hand_target_for_bottle_contact(
+        self,
+        joint_name: str,
+        *,
+        current_value: float,
+        target_value: float,
+    ) -> float:
+        if not self.config.hand_contact_stop_enabled:
+            return target_value
+        finger = _l10_finger_family_from_joint_name(joint_name)
+        if finger is None:
+            return target_value
+
+        blocked_fingers_fn = getattr(self.example, "l10_bottle_contact_stop_fingers", None)
+        if not callable(blocked_fingers_fn):
+            return target_value
+        blocked_fingers = blocked_fingers_fn()
+        if finger not in blocked_fingers:
+            return target_value
+
+        base_joint_name = _l10_base_joint_name(joint_name)
+        closing_direction = self._hand_closing_direction_by_joint.get(base_joint_name, 0.0)
+        if abs(closing_direction) <= 0.0:
+            return target_value
+
+        closing_delta = (float(target_value) - float(current_value)) * closing_direction
+        if closing_delta <= 0.0:
+            return target_value
+
+        retreat = max(0.0, float(self.config.hand_contact_stop_retreat_rad))
+        clamped_target = float(current_value) - closing_direction * retreat
+        limits = self._hand_joint_limits_by_joint.get(base_joint_name)
+        if limits is not None:
+            clamped_target = float(np.clip(clamped_target, limits[0], limits[1]))
+        return clamped_target
 
     def _publish_joint_state(self) -> None:
         assert self._joint_q_host is not None and self._joint_qd_host is not None
@@ -798,6 +845,101 @@ def _l10_joint_label_suffix(side: ArmSide, joint_name: str) -> str:
     if joint_name.startswith("l10_"):
         return f"{side}_{joint_name}"
     return f"{side}_l10_{joint_name}"
+
+
+def _l10_base_joint_name(joint_name: str) -> str:
+    value = str(joint_name)
+    for side in ("left", "right"):
+        prefix = f"{side}_l10_"
+        if value.startswith(prefix):
+            return value[len(prefix) :]
+    if value.startswith("l10_"):
+        return value[len("l10_") :]
+    return value
+
+
+def _l10_finger_family_from_joint_name(joint_name: str) -> str | None:
+    base_name = _l10_base_joint_name(joint_name)
+    for family in ("thumb", "index", "middle", "ring", "pinky"):
+        if base_name.startswith(f"{family}_"):
+            return family
+    return None
+
+
+def _l10_is_contact_stopped_curl_joint(joint_name: str) -> bool:
+    base_name = _l10_base_joint_name(joint_name)
+    if base_name in {"thumb_mcp", "thumb_ip", "thumb_cmc_pitch"}:
+        return True
+    return base_name.endswith(("_mcp_pitch", "_pip", "_dip"))
+
+
+def _l10_closing_direction_by_joint() -> dict[str, float]:
+    try:
+        from teleop_stack.retargeting.hand_config import load_linker_l10_right_hand_spec
+
+        spec = load_linker_l10_right_hand_spec()
+    except Exception:
+        return {}
+
+    open_by_name = dict(zip(spec.default_open_pose.joint_names, spec.default_open_pose.joint_positions, strict=True))
+    close_by_name = dict(zip(spec.default_close_pose.joint_names, spec.default_close_pose.joint_positions, strict=True))
+    direction_by_name: dict[str, float] = {}
+
+    for joint_name in spec.active_joint_names:
+        if not _l10_is_contact_stopped_curl_joint(joint_name):
+            continue
+        delta = float(close_by_name[joint_name]) - float(open_by_name[joint_name])
+        if abs(delta) > 1.0e-9:
+            direction_by_name[joint_name] = 1.0 if delta > 0.0 else -1.0
+
+    for mimic_joint in spec.mimic_joints:
+        if not _l10_is_contact_stopped_curl_joint(mimic_joint.joint_name):
+            continue
+        source_delta = float(close_by_name[mimic_joint.source_joint_name]) - float(
+            open_by_name[mimic_joint.source_joint_name]
+        )
+        delta = float(mimic_joint.multiplier) * source_delta
+        if abs(delta) > 1.0e-9:
+            direction_by_name[mimic_joint.joint_name] = 1.0 if delta > 0.0 else -1.0
+
+    return direction_by_name
+
+
+def _l10_joint_limits_by_joint() -> dict[str, tuple[float, float]]:
+    try:
+        import xml.etree.ElementTree as ET
+
+        from teleop_stack.retargeting.hand_config import load_linker_l10_right_hand_spec
+
+        spec = load_linker_l10_right_hand_spec()
+    except Exception:
+        return {}
+
+    limits_by_name = {
+        str(joint_name): (float(limits[0]), float(limits[1]))
+        for joint_name, limits in zip(spec.active_joint_names, spec.active_joint_limits, strict=True)
+        if _l10_is_contact_stopped_curl_joint(str(joint_name))
+    }
+
+    try:
+        root = ET.parse(spec.urdf_path).getroot()
+    except Exception:
+        return limits_by_name
+
+    for child in root:
+        if child.tag != "joint":
+            continue
+        joint_name = str(child.attrib.get("name", ""))
+        if not _l10_is_contact_stopped_curl_joint(joint_name):
+            continue
+        limit_tag = child.find("limit")
+        if limit_tag is None:
+            continue
+        limits_by_name[joint_name] = (
+            float(limit_tag.attrib.get("lower", "0.0")),
+            float(limit_tag.attrib.get("upper", "0.0")),
+        )
+    return limits_by_name
 
 
 def _expand_l10_mimic_joint_values(joint_values: NamedJointValues) -> NamedJointValues:

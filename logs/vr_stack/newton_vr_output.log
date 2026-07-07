@@ -10,25 +10,25 @@
 [vr-output] ok: XR recovery retries=3600 delay=2.0s
 [vr-output] ok: camera_streamer=/home/whf/Project/newton/../IsaacTeleop/examples/camera_streamer
 [vr-output] ok: streaming :0+0,0 1280x720@20fps -> /dev/video44
-[x11grab @ 0x5dfd1e334340] Stream #0: not enough frames to estimate rate; consider increasing probesize
+[x11grab @ 0x5dfc576ef340] Stream #0: not enough frames to estimate rate; consider increasing probesize
 [vr-output] ok: starting camera_streamer XR config=/home/whf/Project/IsaacTeleop/examples/camera_streamer/build/newton_sim_screen_xr.yaml
 [vr-output] ok: lite camera_streamer image=harness-camera-streamer-lite:latest
-2026-07-06 13:58:15.642 | INFO     | __main__:main:166 - Loading config from: /config/newton_sim_screen_xr.yaml
-2026-07-06 13:58:15.758 | INFO     | __main__:main:188 - ============================================================
-2026-07-06 13:58:15.758 | INFO     | __main__:main:189 - Teleop Camera App
-2026-07-06 13:58:15.759 | INFO     | __main__:main:190 - ============================================================
-2026-07-06 13:58:15.759 | INFO     | __main__:main:191 - Source: local
-2026-07-06 13:58:15.759 | INFO     | __main__:main:192 - Display mode: xr
-2026-07-06 13:58:15.759 | INFO     | __main__:main:193 - Cameras: 1
-2026-07-06 13:58:15.759 | INFO     | __main__:main:197 -   sim_screen (mono): mono:0
-2026-07-06 13:58:15.759 | INFO     | __main__:main:198 - ============================================================
-2026-07-06 13:58:15.759 | INFO     | __main__:main:199 - Press Ctrl+C to stop
+2026-07-07 07:23:32.702 | INFO     | __main__:main:166 - Loading config from: /config/newton_sim_screen_xr.yaml
+2026-07-07 07:23:32.811 | INFO     | __main__:main:188 - ============================================================
+2026-07-07 07:23:32.811 | INFO     | __main__:main:189 - Teleop Camera App
+2026-07-07 07:23:32.811 | INFO     | __main__:main:190 - ============================================================
+2026-07-07 07:23:32.811 | INFO     | __main__:main:191 - Source: local
+2026-07-07 07:23:32.811 | INFO     | __main__:main:192 - Display mode: xr
+2026-07-07 07:23:32.811 | INFO     | __main__:main:193 - Cameras: 1
+2026-07-07 07:23:32.811 | INFO     | __main__:main:197 -   sim_screen (mono): mono:0
+2026-07-07 07:23:32.811 | INFO     | __main__:main:198 - ============================================================
+2026-07-07 07:23:32.811 | INFO     | __main__:main:199 - Press Ctrl+C to stop
 [info] [fragment.cpp:1116] Loading extensions from configs...
 [info] [gxf_executor.cpp:433] Creating context
-2026-07-06 13:58:15.790 | INFO     | teleop_camera_subgraph:_compose_local_sources:403 - Adding local camera: sim_screen (v4l2)
-2026-07-06 13:58:15.791 | INFO     | camera_sources:create_v4l2_source:309 -   V4L2 source: sim_screen /dev/video44 1280x720@0fps
-2026-07-06 13:58:15.793 | INFO     | teleop_camera_subgraph:_compose_xr_mode:816 - XR mode: 1 camera planes (single Vulkan context), hand skeleton overlay=enabled
-2026-07-06 13:58:15.793 | INFO     | teleop_camera_subgraph:compose:394 - Teleop camera subgraph: mode=xr
+2026-07-07 07:23:32.837 | INFO     | teleop_camera_subgraph:_compose_local_sources:403 - Adding local camera: sim_screen (v4l2)
+2026-07-07 07:23:32.838 | INFO     | camera_sources:create_v4l2_source:309 -   V4L2 source: sim_screen /dev/video44 1280x720@0fps
+2026-07-07 07:23:32.840 | INFO     | teleop_camera_subgraph:_compose_xr_mode:816 - XR mode: 1 camera planes (single Vulkan context), hand skeleton overlay=enabled
+2026-07-07 07:23:32.840 | INFO     | teleop_camera_subgraph:compose:394 - Teleop camera subgraph: mode=xr
 LOG in xrCreateInstance: Instance created
 	createInfo->applicationInfo.applicationName: Holoscan XR
 	createInfo->applicationInfo.applicationVersion: 0
@@ -48,25 +48,25 @@ LOG in xrCreateInstance: Instance created
 [error] [component.cpp:89] Component 'teleop_camera_xr_plane_renderer': failed to set argument - Argument 'xr_session': xr::Instance::getSystem: ErrorFormFactorUnavailable
 [error] [gxf_executor.cpp:1616] Exception occurred during initialization of operator: 'teleop_camera_xr_plane_renderer' - Component 'teleop_camera_xr_plane_renderer': failed to set 1 argument(s):
   - Argument 'xr_session': xr::Instance::getSystem: ErrorFormFactorUnavailable
-2026-07-06 13:58:16.030 | WARNING  | __main__:_reexec_self:100 - XR runtime not ready yet. Component 'teleop_camera_xr_plane_renderer': failed to set 1 argument(s):
+2026-07-07 07:23:33.007 | WARNING  | __main__:_reexec_self:100 - XR runtime not ready yet. Component 'teleop_camera_xr_plane_renderer': failed to set 1 argument(s):
   - Argument 'xr_session': xr::Instance::getSystem: ErrorFormFactorUnavailable Retrying in 2.0s... (attempt 1)
-2026-07-06 13:58:18.030 | INFO     | __main__:_reexec_self:102 - Re-executing for clean process state...
-2026-07-06 13:58:18.620 | INFO     | __main__:main:166 - Loading config from: /config/newton_sim_screen_xr.yaml
-2026-07-06 13:58:18.664 | INFO     | __main__:main:188 - ============================================================
-2026-07-06 13:58:18.664 | INFO     | __main__:main:189 - Teleop Camera App
-2026-07-06 13:58:18.664 | INFO     | __main__:main:190 - ============================================================
-2026-07-06 13:58:18.665 | INFO     | __main__:main:191 - Source: local
-2026-07-06 13:58:18.665 | INFO     | __main__:main:192 - Display mode: xr
-2026-07-06 13:58:18.665 | INFO     | __main__:main:193 - Cameras: 1
-2026-07-06 13:58:18.665 | INFO     | __main__:main:197 -   sim_screen (mono): mono:0
-2026-07-06 13:58:18.665 | INFO     | __main__:main:198 - ============================================================
-2026-07-06 13:58:18.666 | INFO     | __main__:main:199 - Press Ctrl+C to stop
+2026-07-07 07:23:35.007 | INFO     | __main__:_reexec_self:102 - Re-executing for clean process state...
+2026-07-07 07:23:35.569 | INFO     | __main__:main:166 - Loading config from: /config/newton_sim_screen_xr.yaml
+2026-07-07 07:23:35.613 | INFO     | __main__:main:188 - ============================================================
+2026-07-07 07:23:35.614 | INFO     | __main__:main:189 - Teleop Camera App
+2026-07-07 07:23:35.614 | INFO     | __main__:main:190 - ============================================================
+2026-07-07 07:23:35.614 | INFO     | __main__:main:191 - Source: local
+2026-07-07 07:23:35.614 | INFO     | __main__:main:192 - Display mode: xr
+2026-07-07 07:23:35.614 | INFO     | __main__:main:193 - Cameras: 1
+2026-07-07 07:23:35.614 | INFO     | __main__:main:197 -   sim_screen (mono): mono:0
+2026-07-07 07:23:35.614 | INFO     | __main__:main:198 - ============================================================
+2026-07-07 07:23:35.614 | INFO     | __main__:main:199 - Press Ctrl+C to stop
 [info] [fragment.cpp:1116] Loading extensions from configs...
 [info] [gxf_executor.cpp:433] Creating context
-2026-07-06 13:58:18.700 | INFO     | teleop_camera_subgraph:_compose_local_sources:403 - Adding local camera: sim_screen (v4l2)
-2026-07-06 13:58:18.701 | INFO     | camera_sources:create_v4l2_source:309 -   V4L2 source: sim_screen /dev/video44 1280x720@0fps
-2026-07-06 13:58:18.706 | INFO     | teleop_camera_subgraph:_compose_xr_mode:816 - XR mode: 1 camera planes (single Vulkan context), hand skeleton overlay=enabled
-2026-07-06 13:58:18.706 | INFO     | teleop_camera_subgraph:compose:394 - Teleop camera subgraph: mode=xr
+2026-07-07 07:23:35.649 | INFO     | teleop_camera_subgraph:_compose_local_sources:403 - Adding local camera: sim_screen (v4l2)
+2026-07-07 07:23:35.650 | INFO     | camera_sources:create_v4l2_source:309 -   V4L2 source: sim_screen /dev/video44 1280x720@0fps
+2026-07-07 07:23:35.654 | INFO     | teleop_camera_subgraph:_compose_xr_mode:816 - XR mode: 1 camera planes (single Vulkan context), hand skeleton overlay=enabled
+2026-07-07 07:23:35.654 | INFO     | teleop_camera_subgraph:compose:394 - Teleop camera subgraph: mode=xr
 LOG in xrCreateInstance: Instance created
 	createInfo->applicationInfo.applicationName: Holoscan XR
 	createInfo->applicationInfo.applicationVersion: 0
@@ -86,25 +86,25 @@ LOG in xrCreateInstance: Instance created
 [error] [component.cpp:89] Component 'teleop_camera_xr_plane_renderer': failed to set argument - Argument 'xr_session': xr::Instance::getSystem: ErrorFormFactorUnavailable
 [error] [gxf_executor.cpp:1616] Exception occurred during initialization of operator: 'teleop_camera_xr_plane_renderer' - Component 'teleop_camera_xr_plane_renderer': failed to set 1 argument(s):
   - Argument 'xr_session': xr::Instance::getSystem: ErrorFormFactorUnavailable
-2026-07-06 13:58:18.884 | WARNING  | __main__:_reexec_self:100 - XR runtime not ready yet. Component 'teleop_camera_xr_plane_renderer': failed to set 1 argument(s):
+2026-07-07 07:23:35.860 | WARNING  | __main__:_reexec_self:100 - XR runtime not ready yet. Component 'teleop_camera_xr_plane_renderer': failed to set 1 argument(s):
   - Argument 'xr_session': xr::Instance::getSystem: ErrorFormFactorUnavailable Retrying in 2.0s... (attempt 2)
-2026-07-06 13:58:20.884 | INFO     | __main__:_reexec_self:102 - Re-executing for clean process state...
-2026-07-06 13:58:21.480 | INFO     | __main__:main:166 - Loading config from: /config/newton_sim_screen_xr.yaml
-2026-07-06 13:58:21.531 | INFO     | __main__:main:188 - ============================================================
-2026-07-06 13:58:21.531 | INFO     | __main__:main:189 - Teleop Camera App
-2026-07-06 13:58:21.531 | INFO     | __main__:main:190 - ============================================================
-2026-07-06 13:58:21.531 | INFO     | __main__:main:191 - Source: local
-2026-07-06 13:58:21.532 | INFO     | __main__:main:192 - Display mode: xr
-2026-07-06 13:58:21.532 | INFO     | __main__:main:193 - Cameras: 1
-2026-07-06 13:58:21.532 | INFO     | __main__:main:197 -   sim_screen (mono): mono:0
-2026-07-06 13:58:21.532 | INFO     | __main__:main:198 - ============================================================
-2026-07-06 13:58:21.532 | INFO     | __main__:main:199 - Press Ctrl+C to stop
+2026-07-07 07:23:37.861 | INFO     | __main__:_reexec_self:102 - Re-executing for clean process state...
+2026-07-07 07:23:38.452 | INFO     | __main__:main:166 - Loading config from: /config/newton_sim_screen_xr.yaml
+2026-07-07 07:23:38.502 | INFO     | __main__:main:188 - ============================================================
+2026-07-07 07:23:38.503 | INFO     | __main__:main:189 - Teleop Camera App
+2026-07-07 07:23:38.503 | INFO     | __main__:main:190 - ============================================================
+2026-07-07 07:23:38.503 | INFO     | __main__:main:191 - Source: local
+2026-07-07 07:23:38.503 | INFO     | __main__:main:192 - Display mode: xr
+2026-07-07 07:23:38.503 | INFO     | __main__:main:193 - Cameras: 1
+2026-07-07 07:23:38.504 | INFO     | __main__:main:197 -   sim_screen (mono): mono:0
+2026-07-07 07:23:38.504 | INFO     | __main__:main:198 - ============================================================
+2026-07-07 07:23:38.504 | INFO     | __main__:main:199 - Press Ctrl+C to stop
 [info] [fragment.cpp:1116] Loading extensions from configs...
 [info] [gxf_executor.cpp:433] Creating context
-2026-07-06 13:58:21.564 | INFO     | teleop_camera_subgraph:_compose_local_sources:403 - Adding local camera: sim_screen (v4l2)
-2026-07-06 13:58:21.564 | INFO     | camera_sources:create_v4l2_source:309 -   V4L2 source: sim_screen /dev/video44 1280x720@0fps
-2026-07-06 13:58:21.566 | INFO     | teleop_camera_subgraph:_compose_xr_mode:816 - XR mode: 1 camera planes (single Vulkan context), hand skeleton overlay=enabled
-2026-07-06 13:58:21.567 | INFO     | teleop_camera_subgraph:compose:394 - Teleop camera subgraph: mode=xr
+2026-07-07 07:23:38.536 | INFO     | teleop_camera_subgraph:_compose_local_sources:403 - Adding local camera: sim_screen (v4l2)
+2026-07-07 07:23:38.537 | INFO     | camera_sources:create_v4l2_source:309 -   V4L2 source: sim_screen /dev/video44 1280x720@0fps
+2026-07-07 07:23:38.539 | INFO     | teleop_camera_subgraph:_compose_xr_mode:816 - XR mode: 1 camera planes (single Vulkan context), hand skeleton overlay=enabled
+2026-07-07 07:23:38.539 | INFO     | teleop_camera_subgraph:compose:394 - Teleop camera subgraph: mode=xr
 LOG in xrCreateInstance: Instance created
 	createInfo->applicationInfo.applicationName: Holoscan XR
 	createInfo->applicationInfo.applicationVersion: 0
@@ -124,25 +124,25 @@ LOG in xrCreateInstance: Instance created
 [error] [component.cpp:89] Component 'teleop_camera_xr_plane_renderer': failed to set argument - Argument 'xr_session': xr::Instance::getSystem: ErrorFormFactorUnavailable
 [error] [gxf_executor.cpp:1616] Exception occurred during initialization of operator: 'teleop_camera_xr_plane_renderer' - Component 'teleop_camera_xr_plane_renderer': failed to set 1 argument(s):
   - Argument 'xr_session': xr::Instance::getSystem: ErrorFormFactorUnavailable
-2026-07-06 13:58:21.788 | WARNING  | __main__:_reexec_self:100 - XR runtime not ready yet. Component 'teleop_camera_xr_plane_renderer': failed to set 1 argument(s):
+2026-07-07 07:23:38.715 | WARNING  | __main__:_reexec_self:100 - XR runtime not ready yet. Component 'teleop_camera_xr_plane_renderer': failed to set 1 argument(s):
   - Argument 'xr_session': xr::Instance::getSystem: ErrorFormFactorUnavailable Retrying in 2.0s... (attempt 3)
-2026-07-06 13:58:23.788 | INFO     | __main__:_reexec_self:102 - Re-executing for clean process state...
-2026-07-06 13:58:24.448 | INFO     | __main__:main:166 - Loading config from: /config/newton_sim_screen_xr.yaml
-2026-07-06 13:58:24.492 | INFO     | __main__:main:188 - ============================================================
-2026-07-06 13:58:24.492 | INFO     | __main__:main:189 - Teleop Camera App
-2026-07-06 13:58:24.492 | INFO     | __main__:main:190 - ============================================================
-2026-07-06 13:58:24.492 | INFO     | __main__:main:191 - Source: local
-2026-07-06 13:58:24.492 | INFO     | __main__:main:192 - Display mode: xr
-2026-07-06 13:58:24.493 | INFO     | __main__:main:193 - Cameras: 1
-2026-07-06 13:58:24.493 | INFO     | __main__:main:197 -   sim_screen (mono): mono:0
-2026-07-06 13:58:24.493 | INFO     | __main__:main:198 - ============================================================
-2026-07-06 13:58:24.493 | INFO     | __main__:main:199 - Press Ctrl+C to stop
+2026-07-07 07:23:40.715 | INFO     | __main__:_reexec_self:102 - Re-executing for clean process state...
+2026-07-07 07:23:41.350 | INFO     | __main__:main:166 - Loading config from: /config/newton_sim_screen_xr.yaml
+2026-07-07 07:23:41.394 | INFO     | __main__:main:188 - ============================================================
+2026-07-07 07:23:41.394 | INFO     | __main__:main:189 - Teleop Camera App
+2026-07-07 07:23:41.394 | INFO     | __main__:main:190 - ============================================================
+2026-07-07 07:23:41.394 | INFO     | __main__:main:191 - Source: local
+2026-07-07 07:23:41.394 | INFO     | __main__:main:192 - Display mode: xr
+2026-07-07 07:23:41.394 | INFO     | __main__:main:193 - Cameras: 1
+2026-07-07 07:23:41.395 | INFO     | __main__:main:197 -   sim_screen (mono): mono:0
+2026-07-07 07:23:41.395 | INFO     | __main__:main:198 - ============================================================
+2026-07-07 07:23:41.395 | INFO     | __main__:main:199 - Press Ctrl+C to stop
 [info] [fragment.cpp:1116] Loading extensions from configs...
 [info] [gxf_executor.cpp:433] Creating context
-2026-07-06 13:58:24.522 | INFO     | teleop_camera_subgraph:_compose_local_sources:403 - Adding local camera: sim_screen (v4l2)
-2026-07-06 13:58:24.522 | INFO     | camera_sources:create_v4l2_source:309 -   V4L2 source: sim_screen /dev/video44 1280x720@0fps
-2026-07-06 13:58:24.526 | INFO     | teleop_camera_subgraph:_compose_xr_mode:816 - XR mode: 1 camera planes (single Vulkan context), hand skeleton overlay=enabled
-2026-07-06 13:58:24.526 | INFO     | teleop_camera_subgraph:compose:394 - Teleop camera subgraph: mode=xr
+2026-07-07 07:23:41.429 | INFO     | teleop_camera_subgraph:_compose_local_sources:403 - Adding local camera: sim_screen (v4l2)
+2026-07-07 07:23:41.429 | INFO     | camera_sources:create_v4l2_source:309 -   V4L2 source: sim_screen /dev/video44 1280x720@0fps
+2026-07-07 07:23:41.434 | INFO     | teleop_camera_subgraph:_compose_xr_mode:816 - XR mode: 1 camera planes (single Vulkan context), hand skeleton overlay=enabled
+2026-07-07 07:23:41.434 | INFO     | teleop_camera_subgraph:compose:394 - Teleop camera subgraph: mode=xr
 LOG in xrCreateInstance: Instance created
 	createInfo->applicationInfo.applicationName: Holoscan XR
 	createInfo->applicationInfo.applicationVersion: 0
@@ -162,25 +162,25 @@ LOG in xrCreateInstance: Instance created
 [error] [component.cpp:89] Component 'teleop_camera_xr_plane_renderer': failed to set argument - Argument 'xr_session': xr::Instance::getSystem: ErrorFormFactorUnavailable
 [error] [gxf_executor.cpp:1616] Exception occurred during initialization of operator: 'teleop_camera_xr_plane_renderer' - Component 'teleop_camera_xr_plane_renderer': failed to set 1 argument(s):
   - Argument 'xr_session': xr::Instance::getSystem: ErrorFormFactorUnavailable
-2026-07-06 13:58:24.746 | WARNING  | __main__:_reexec_self:100 - XR runtime not ready yet. Component 'teleop_camera_xr_plane_renderer': failed to set 1 argument(s):
+2026-07-07 07:23:41.674 | WARNING  | __main__:_reexec_self:100 - XR runtime not ready yet. Component 'teleop_camera_xr_plane_renderer': failed to set 1 argument(s):
   - Argument 'xr_session': xr::Instance::getSystem: ErrorFormFactorUnavailable Retrying in 2.0s... (attempt 4)
-2026-07-06 13:58:26.746 | INFO     | __main__:_reexec_self:102 - Re-executing for clean process state...
-2026-07-06 13:58:27.451 | INFO     | __main__:main:166 - Loading config from: /config/newton_sim_screen_xr.yaml
-2026-07-06 13:58:27.495 | INFO     | __main__:main:188 - ============================================================
-2026-07-06 13:58:27.495 | INFO     | __main__:main:189 - Teleop Camera App
-2026-07-06 13:58:27.496 | INFO     | __main__:main:190 - ============================================================
-2026-07-06 13:58:27.496 | INFO     | __main__:main:191 - Source: local
-2026-07-06 13:58:27.496 | INFO     | __main__:main:192 - Display mode: xr
-2026-07-06 13:58:27.496 | INFO     | __main__:main:193 - Cameras: 1
-2026-07-06 13:58:27.496 | INFO     | __main__:main:197 -   sim_screen (mono): mono:0
-2026-07-06 13:58:27.496 | INFO     | __main__:main:198 - ============================================================
-2026-07-06 13:58:27.496 | INFO     | __main__:main:199 - Press Ctrl+C to stop
+2026-07-07 07:23:43.675 | INFO     | __main__:_reexec_self:102 - Re-executing for clean process state...
+2026-07-07 07:23:44.353 | INFO     | __main__:main:166 - Loading config from: /config/newton_sim_screen_xr.yaml
+2026-07-07 07:23:44.397 | INFO     | __main__:main:188 - ============================================================
+2026-07-07 07:23:44.397 | INFO     | __main__:main:189 - Teleop Camera App
+2026-07-07 07:23:44.397 | INFO     | __main__:main:190 - ============================================================
+2026-07-07 07:23:44.398 | INFO     | __main__:main:191 - Source: local
+2026-07-07 07:23:44.398 | INFO     | __main__:main:192 - Display mode: xr
+2026-07-07 07:23:44.398 | INFO     | __main__:main:193 - Cameras: 1
+2026-07-07 07:23:44.398 | INFO     | __main__:main:197 -   sim_screen (mono): mono:0
+2026-07-07 07:23:44.398 | INFO     | __main__:main:198 - ============================================================
+2026-07-07 07:23:44.398 | INFO     | __main__:main:199 - Press Ctrl+C to stop
 [info] [fragment.cpp:1116] Loading extensions from configs...
 [info] [gxf_executor.cpp:433] Creating context
-2026-07-06 13:58:27.524 | INFO     | teleop_camera_subgraph:_compose_local_sources:403 - Adding local camera: sim_screen (v4l2)
-2026-07-06 13:58:27.525 | INFO     | camera_sources:create_v4l2_source:309 -   V4L2 source: sim_screen /dev/video44 1280x720@0fps
-2026-07-06 13:58:27.529 | INFO     | teleop_camera_subgraph:_compose_xr_mode:816 - XR mode: 1 camera planes (single Vulkan context), hand skeleton overlay=enabled
-2026-07-06 13:58:27.529 | INFO     | teleop_camera_subgraph:compose:394 - Teleop camera subgraph: mode=xr
+2026-07-07 07:23:44.427 | INFO     | teleop_camera_subgraph:_compose_local_sources:403 - Adding local camera: sim_screen (v4l2)
+2026-07-07 07:23:44.427 | INFO     | camera_sources:create_v4l2_source:309 -   V4L2 source: sim_screen /dev/video44 1280x720@0fps
+2026-07-07 07:23:44.431 | INFO     | teleop_camera_subgraph:_compose_xr_mode:816 - XR mode: 1 camera planes (single Vulkan context), hand skeleton overlay=enabled
+2026-07-07 07:23:44.431 | INFO     | teleop_camera_subgraph:compose:394 - Teleop camera subgraph: mode=xr
 LOG in xrCreateInstance: Instance created
 	createInfo->applicationInfo.applicationName: Holoscan XR
 	createInfo->applicationInfo.applicationVersion: 0
@@ -200,25 +200,25 @@ LOG in xrCreateInstance: Instance created
 [error] [component.cpp:89] Component 'teleop_camera_xr_plane_renderer': failed to set argument - Argument 'xr_session': xr::Instance::getSystem: ErrorFormFactorUnavailable
 [error] [gxf_executor.cpp:1616] Exception occurred during initialization of operator: 'teleop_camera_xr_plane_renderer' - Component 'teleop_camera_xr_plane_renderer': failed to set 1 argument(s):
   - Argument 'xr_session': xr::Instance::getSystem: ErrorFormFactorUnavailable
-2026-07-06 13:58:27.700 | WARNING  | __main__:_reexec_self:100 - XR runtime not ready yet. Component 'teleop_camera_xr_plane_renderer': failed to set 1 argument(s):
+2026-07-07 07:23:44.629 | WARNING  | __main__:_reexec_self:100 - XR runtime not ready yet. Component 'teleop_camera_xr_plane_renderer': failed to set 1 argument(s):
   - Argument 'xr_session': xr::Instance::getSystem: ErrorFormFactorUnavailable Retrying in 2.0s... (attempt 5)
-2026-07-06 13:58:29.700 | INFO     | __main__:_reexec_self:102 - Re-executing for clean process state...
-2026-07-06 13:58:30.370 | INFO     | __main__:main:166 - Loading config from: /config/newton_sim_screen_xr.yaml
-2026-07-06 13:58:30.413 | INFO     | __main__:main:188 - ============================================================
-2026-07-06 13:58:30.413 | INFO     | __main__:main:189 - Teleop Camera App
-2026-07-06 13:58:30.413 | INFO     | __main__:main:190 - ============================================================
-2026-07-06 13:58:30.413 | INFO     | __main__:main:191 - Source: local
-2026-07-06 13:58:30.414 | INFO     | __main__:main:192 - Display mode: xr
-2026-07-06 13:58:30.414 | INFO     | __main__:main:193 - Cameras: 1
-2026-07-06 13:58:30.414 | INFO     | __main__:main:197 -   sim_screen (mono): mono:0
-2026-07-06 13:58:30.414 | INFO     | __main__:main:198 - ============================================================
-2026-07-06 13:58:30.414 | INFO     | __main__:main:199 - Press Ctrl+C to stop
+2026-07-07 07:23:46.629 | INFO     | __main__:_reexec_self:102 - Re-executing for clean process state...
+2026-07-07 07:23:47.245 | INFO     | __main__:main:166 - Loading config from: /config/newton_sim_screen_xr.yaml
+2026-07-07 07:23:47.288 | INFO     | __main__:main:188 - ============================================================
+2026-07-07 07:23:47.289 | INFO     | __main__:main:189 - Teleop Camera App
+2026-07-07 07:23:47.289 | INFO     | __main__:main:190 - ============================================================
+2026-07-07 07:23:47.289 | INFO     | __main__:main:191 - Source: local
+2026-07-07 07:23:47.289 | INFO     | __main__:main:192 - Display mode: xr
+2026-07-07 07:23:47.289 | INFO     | __main__:main:193 - Cameras: 1
+2026-07-07 07:23:47.289 | INFO     | __main__:main:197 -   sim_screen (mono): mono:0
+2026-07-07 07:23:47.289 | INFO     | __main__:main:198 - ============================================================
+2026-07-07 07:23:47.289 | INFO     | __main__:main:199 - Press Ctrl+C to stop
 [info] [fragment.cpp:1116] Loading extensions from configs...
 [info] [gxf_executor.cpp:433] Creating context
-2026-07-06 13:58:30.442 | INFO     | teleop_camera_subgraph:_compose_local_sources:403 - Adding local camera: sim_screen (v4l2)
-2026-07-06 13:58:30.443 | INFO     | camera_sources:create_v4l2_source:309 -   V4L2 source: sim_screen /dev/video44 1280x720@0fps
-2026-07-06 13:58:30.447 | INFO     | teleop_camera_subgraph:_compose_xr_mode:816 - XR mode: 1 camera planes (single Vulkan context), hand skeleton overlay=enabled
-2026-07-06 13:58:30.447 | INFO     | teleop_camera_subgraph:compose:394 - Teleop camera subgraph: mode=xr
+2026-07-07 07:23:47.318 | INFO     | teleop_camera_subgraph:_compose_local_sources:403 - Adding local camera: sim_screen (v4l2)
+2026-07-07 07:23:47.318 | INFO     | camera_sources:create_v4l2_source:309 -   V4L2 source: sim_screen /dev/video44 1280x720@0fps
+2026-07-07 07:23:47.322 | INFO     | teleop_camera_subgraph:_compose_xr_mode:816 - XR mode: 1 camera planes (single Vulkan context), hand skeleton overlay=enabled
+2026-07-07 07:23:47.322 | INFO     | teleop_camera_subgraph:compose:394 - Teleop camera subgraph: mode=xr
 LOG in xrCreateInstance: Instance created
 	createInfo->applicationInfo.applicationName: Holoscan XR
 	createInfo->applicationInfo.applicationVersion: 0
@@ -238,25 +238,25 @@ LOG in xrCreateInstance: Instance created
 [error] [component.cpp:89] Component 'teleop_camera_xr_plane_renderer': failed to set argument - Argument 'xr_session': xr::Instance::getSystem: ErrorFormFactorUnavailable
 [error] [gxf_executor.cpp:1616] Exception occurred during initialization of operator: 'teleop_camera_xr_plane_renderer' - Component 'teleop_camera_xr_plane_renderer': failed to set 1 argument(s):
   - Argument 'xr_session': xr::Instance::getSystem: ErrorFormFactorUnavailable
-2026-07-06 13:58:30.656 | WARNING  | __main__:_reexec_self:100 - XR runtime not ready yet. Component 'teleop_camera_xr_plane_renderer': failed to set 1 argument(s):
+2026-07-07 07:23:47.534 | WARNING  | __main__:_reexec_self:100 - XR runtime not ready yet. Component 'teleop_camera_xr_plane_renderer': failed to set 1 argument(s):
   - Argument 'xr_session': xr::Instance::getSystem: ErrorFormFactorUnavailable Retrying in 2.0s... (attempt 6)
-2026-07-06 13:58:32.657 | INFO     | __main__:_reexec_self:102 - Re-executing for clean process state...
-2026-07-06 13:58:33.487 | INFO     | __main__:main:166 - Loading config from: /config/newton_sim_screen_xr.yaml
-2026-07-06 13:58:33.525 | INFO     | __main__:main:188 - ============================================================
-2026-07-06 13:58:33.525 | INFO     | __main__:main:189 - Teleop Camera App
-2026-07-06 13:58:33.526 | INFO     | __main__:main:190 - ============================================================
-2026-07-06 13:58:33.526 | INFO     | __main__:main:191 - Source: local
-2026-07-06 13:58:33.526 | INFO     | __main__:main:192 - Display mode: xr
-2026-07-06 13:58:33.526 | INFO     | __main__:main:193 - Cameras: 1
-2026-07-06 13:58:33.526 | INFO     | __main__:main:197 -   sim_screen (mono): mono:0
-2026-07-06 13:58:33.526 | INFO     | __main__:main:198 - ============================================================
-2026-07-06 13:58:33.526 | INFO     | __main__:main:199 - Press Ctrl+C to stop
+2026-07-07 07:23:49.534 | INFO     | __main__:_reexec_self:102 - Re-executing for clean process state...
+2026-07-07 07:23:50.361 | INFO     | __main__:main:166 - Loading config from: /config/newton_sim_screen_xr.yaml
+2026-07-07 07:23:50.400 | INFO     | __main__:main:188 - ============================================================
+2026-07-07 07:23:50.400 | INFO     | __main__:main:189 - Teleop Camera App
+2026-07-07 07:23:50.400 | INFO     | __main__:main:190 - ============================================================
+2026-07-07 07:23:50.400 | INFO     | __main__:main:191 - Source: local
+2026-07-07 07:23:50.400 | INFO     | __main__:main:192 - Display mode: xr
+2026-07-07 07:23:50.400 | INFO     | __main__:main:193 - Cameras: 1
+2026-07-07 07:23:50.401 | INFO     | __main__:main:197 -   sim_screen (mono): mono:0
+2026-07-07 07:23:50.401 | INFO     | __main__:main:198 - ============================================================
+2026-07-07 07:23:50.401 | INFO     | __main__:main:199 - Press Ctrl+C to stop
 [info] [fragment.cpp:1116] Loading extensions from configs...
 [info] [gxf_executor.cpp:433] Creating context
-2026-07-06 13:58:33.558 | INFO     | teleop_camera_subgraph:_compose_local_sources:403 - Adding local camera: sim_screen (v4l2)
-2026-07-06 13:58:33.559 | INFO     | camera_sources:create_v4l2_source:309 -   V4L2 source: sim_screen /dev/video44 1280x720@0fps
-2026-07-06 13:58:33.564 | INFO     | teleop_camera_subgraph:_compose_xr_mode:816 - XR mode: 1 camera planes (single Vulkan context), hand skeleton overlay=enabled
-2026-07-06 13:58:33.564 | INFO     | teleop_camera_subgraph:compose:394 - Teleop camera subgraph: mode=xr
+2026-07-07 07:23:50.426 | INFO     | teleop_camera_subgraph:_compose_local_sources:403 - Adding local camera: sim_screen (v4l2)
+2026-07-07 07:23:50.426 | INFO     | camera_sources:create_v4l2_source:309 -   V4L2 source: sim_screen /dev/video44 1280x720@0fps
+2026-07-07 07:23:50.430 | INFO     | teleop_camera_subgraph:_compose_xr_mode:816 - XR mode: 1 camera planes (single Vulkan context), hand skeleton overlay=enabled
+2026-07-07 07:23:50.430 | INFO     | teleop_camera_subgraph:compose:394 - Teleop camera subgraph: mode=xr
 LOG in xrCreateInstance: Instance created
 	createInfo->applicationInfo.applicationName: Holoscan XR
 	createInfo->applicationInfo.applicationVersion: 0
@@ -276,25 +276,25 @@ LOG in xrCreateInstance: Instance created
 [error] [component.cpp:89] Component 'teleop_camera_xr_plane_renderer': failed to set argument - Argument 'xr_session': xr::Instance::getSystem: ErrorFormFactorUnavailable
 [error] [gxf_executor.cpp:1616] Exception occurred during initialization of operator: 'teleop_camera_xr_plane_renderer' - Component 'teleop_camera_xr_plane_renderer': failed to set 1 argument(s):
   - Argument 'xr_session': xr::Instance::getSystem: ErrorFormFactorUnavailable
-2026-07-06 13:58:33.812 | WARNING  | __main__:_reexec_self:100 - XR runtime not ready yet. Component 'teleop_camera_xr_plane_renderer': failed to set 1 argument(s):
+2026-07-07 07:23:50.689 | WARNING  | __main__:_reexec_self:100 - XR runtime not ready yet. Component 'teleop_camera_xr_plane_renderer': failed to set 1 argument(s):
   - Argument 'xr_session': xr::Instance::getSystem: ErrorFormFactorUnavailable Retrying in 2.0s... (attempt 7)
-2026-07-06 13:58:35.813 | INFO     | __main__:_reexec_self:102 - Re-executing for clean process state...
-2026-07-06 13:58:36.799 | INFO     | __main__:main:166 - Loading config from: /config/newton_sim_screen_xr.yaml
-2026-07-06 13:58:36.847 | INFO     | __main__:main:188 - ============================================================
-2026-07-06 13:58:36.847 | INFO     | __main__:main:189 - Teleop Camera App
-2026-07-06 13:58:36.847 | INFO     | __main__:main:190 - ============================================================
-2026-07-06 13:58:36.847 | INFO     | __main__:main:191 - Source: local
-2026-07-06 13:58:36.847 | INFO     | __main__:main:192 - Display mode: xr
-2026-07-06 13:58:36.847 | INFO     | __main__:main:193 - Cameras: 1
-2026-07-06 13:58:36.847 | INFO     | __main__:main:197 -   sim_screen (mono): mono:0
-2026-07-06 13:58:36.848 | INFO     | __main__:main:198 - ============================================================
-2026-07-06 13:58:36.848 | INFO     | __main__:main:199 - Press Ctrl+C to stop
+2026-07-07 07:23:52.689 | INFO     | __main__:_reexec_self:102 - Re-executing for clean process state...
+2026-07-07 07:23:53.574 | INFO     | __main__:main:166 - Loading config from: /config/newton_sim_screen_xr.yaml
+2026-07-07 07:23:53.619 | INFO     | __main__:main:188 - ============================================================
+2026-07-07 07:23:53.619 | INFO     | __main__:main:189 - Teleop Camera App
+2026-07-07 07:23:53.619 | INFO     | __main__:main:190 - ============================================================
+2026-07-07 07:23:53.619 | INFO     | __main__:main:191 - Source: local
+2026-07-07 07:23:53.619 | INFO     | __main__:main:192 - Display mode: xr
+2026-07-07 07:23:53.619 | INFO     | __main__:main:193 - Cameras: 1
+2026-07-07 07:23:53.619 | INFO     | __main__:main:197 -   sim_screen (mono): mono:0
+2026-07-07 07:23:53.619 | INFO     | __main__:main:198 - ============================================================
+2026-07-07 07:23:53.620 | INFO     | __main__:main:199 - Press Ctrl+C to stop
 [info] [fragment.cpp:1116] Loading extensions from configs...
 [info] [gxf_executor.cpp:433] Creating context
-2026-07-06 13:58:36.883 | INFO     | teleop_camera_subgraph:_compose_local_sources:403 - Adding local camera: sim_screen (v4l2)
-2026-07-06 13:58:36.883 | INFO     | camera_sources:create_v4l2_source:309 -   V4L2 source: sim_screen /dev/video44 1280x720@0fps
-2026-07-06 13:58:36.888 | INFO     | teleop_camera_subgraph:_compose_xr_mode:816 - XR mode: 1 camera planes (single Vulkan context), hand skeleton overlay=enabled
-2026-07-06 13:58:36.888 | INFO     | teleop_camera_subgraph:compose:394 - Teleop camera subgraph: mode=xr
+2026-07-07 07:23:53.649 | INFO     | teleop_camera_subgraph:_compose_local_sources:403 - Adding local camera: sim_screen (v4l2)
+2026-07-07 07:23:53.649 | INFO     | camera_sources:create_v4l2_source:309 -   V4L2 source: sim_screen /dev/video44 1280x720@0fps
+2026-07-07 07:23:53.653 | INFO     | teleop_camera_subgraph:_compose_xr_mode:816 - XR mode: 1 camera planes (single Vulkan context), hand skeleton overlay=enabled
+2026-07-07 07:23:53.653 | INFO     | teleop_camera_subgraph:compose:394 - Teleop camera subgraph: mode=xr
 LOG in xrCreateInstance: Instance created
 	createInfo->applicationInfo.applicationName: Holoscan XR
 	createInfo->applicationInfo.applicationVersion: 0
@@ -314,25 +314,25 @@ LOG in xrCreateInstance: Instance created
 [error] [component.cpp:89] Component 'teleop_camera_xr_plane_renderer': failed to set argument - Argument 'xr_session': xr::Instance::getSystem: ErrorFormFactorUnavailable
 [error] [gxf_executor.cpp:1616] Exception occurred during initialization of operator: 'teleop_camera_xr_plane_renderer' - Component 'teleop_camera_xr_plane_renderer': failed to set 1 argument(s):
   - Argument 'xr_session': xr::Instance::getSystem: ErrorFormFactorUnavailable
-2026-07-06 13:58:37.065 | WARNING  | __main__:_reexec_self:100 - XR runtime not ready yet. Component 'teleop_camera_xr_plane_renderer': failed to set 1 argument(s):
+2026-07-07 07:23:53.842 | WARNING  | __main__:_reexec_self:100 - XR runtime not ready yet. Component 'teleop_camera_xr_plane_renderer': failed to set 1 argument(s):
   - Argument 'xr_session': xr::Instance::getSystem: ErrorFormFactorUnavailable Retrying in 2.0s... (attempt 8)
-2026-07-06 13:58:39.065 | INFO     | __main__:_reexec_self:102 - Re-executing for clean process state...
-2026-07-06 13:58:39.669 | INFO     | __main__:main:166 - Loading config from: /config/newton_sim_screen_xr.yaml
-2026-07-06 13:58:39.718 | INFO     | __main__:main:188 - ============================================================
-2026-07-06 13:58:39.718 | INFO     | __main__:main:189 - Teleop Camera App
-2026-07-06 13:58:39.718 | INFO     | __main__:main:190 - ============================================================
-2026-07-06 13:58:39.719 | INFO     | __main__:main:191 - Source: local
-2026-07-06 13:58:39.719 | INFO     | __main__:main:192 - Display mode: xr
-2026-07-06 13:58:39.719 | INFO     | __main__:main:193 - Cameras: 1
-2026-07-06 13:58:39.719 | INFO     | __main__:main:197 -   sim_screen (mono): mono:0
-2026-07-06 13:58:39.719 | INFO     | __main__:main:198 - ============================================================
-2026-07-06 13:58:39.719 | INFO     | __main__:main:199 - Press Ctrl+C to stop
+2026-07-07 07:23:55.842 | INFO     | __main__:_reexec_self:102 - Re-executing for clean process state...
+2026-07-07 07:23:56.604 | INFO     | __main__:main:166 - Loading config from: /config/newton_sim_screen_xr.yaml
+2026-07-07 07:23:56.643 | INFO     | __main__:main:188 - ============================================================
+2026-07-07 07:23:56.644 | INFO     | __main__:main:189 - Teleop Camera App
+2026-07-07 07:23:56.644 | INFO     | __main__:main:190 - ============================================================
+2026-07-07 07:23:56.644 | INFO     | __main__:main:191 - Source: local
+2026-07-07 07:23:56.644 | INFO     | __main__:main:192 - Display mode: xr
+2026-07-07 07:23:56.644 | INFO     | __main__:main:193 - Cameras: 1
+2026-07-07 07:23:56.644 | INFO     | __main__:main:197 -   sim_screen (mono): mono:0
+2026-07-07 07:23:56.645 | INFO     | __main__:main:198 - ============================================================
+2026-07-07 07:23:56.645 | INFO     | __main__:main:199 - Press Ctrl+C to stop
 [info] [fragment.cpp:1116] Loading extensions from configs...
 [info] [gxf_executor.cpp:433] Creating context
-2026-07-06 13:58:39.753 | INFO     | teleop_camera_subgraph:_compose_local_sources:403 - Adding local camera: sim_screen (v4l2)
-2026-07-06 13:58:39.753 | INFO     | camera_sources:create_v4l2_source:309 -   V4L2 source: sim_screen /dev/video44 1280x720@0fps
-2026-07-06 13:58:39.758 | INFO     | teleop_camera_subgraph:_compose_xr_mode:816 - XR mode: 1 camera planes (single Vulkan context), hand skeleton overlay=enabled
-2026-07-06 13:58:39.758 | INFO     | teleop_camera_subgraph:compose:394 - Teleop camera subgraph: mode=xr
+2026-07-07 07:23:56.673 | INFO     | teleop_camera_subgraph:_compose_local_sources:403 - Adding local camera: sim_screen (v4l2)
+2026-07-07 07:23:56.674 | INFO     | camera_sources:create_v4l2_source:309 -   V4L2 source: sim_screen /dev/video44 1280x720@0fps
+2026-07-07 07:23:56.678 | INFO     | teleop_camera_subgraph:_compose_xr_mode:816 - XR mode: 1 camera planes (single Vulkan context), hand skeleton overlay=enabled
+2026-07-07 07:23:56.678 | INFO     | teleop_camera_subgraph:compose:394 - Teleop camera subgraph: mode=xr
 LOG in xrCreateInstance: Instance created
 	createInfo->applicationInfo.applicationName: Holoscan XR
 	createInfo->applicationInfo.applicationVersion: 0
@@ -352,25 +352,25 @@ LOG in xrCreateInstance: Instance created
 [error] [component.cpp:89] Component 'teleop_camera_xr_plane_renderer': failed to set argument - Argument 'xr_session': xr::Instance::getSystem: ErrorFormFactorUnavailable
 [error] [gxf_executor.cpp:1616] Exception occurred during initialization of operator: 'teleop_camera_xr_plane_renderer' - Component 'teleop_camera_xr_plane_renderer': failed to set 1 argument(s):
   - Argument 'xr_session': xr::Instance::getSystem: ErrorFormFactorUnavailable
-2026-07-06 13:58:40.024 | WARNING  | __main__:_reexec_self:100 - XR runtime not ready yet. Component 'teleop_camera_xr_plane_renderer': failed to set 1 argument(s):
+2026-07-07 07:23:56.896 | WARNING  | __main__:_reexec_self:100 - XR runtime not ready yet. Component 'teleop_camera_xr_plane_renderer': failed to set 1 argument(s):
   - Argument 'xr_session': xr::Instance::getSystem: ErrorFormFactorUnavailable Retrying in 2.0s... (attempt 9)
-2026-07-06 13:58:42.024 | INFO     | __main__:_reexec_self:102 - Re-executing for clean process state...
-2026-07-06 13:58:42.582 | INFO     | __main__:main:166 - Loading config from: /config/newton_sim_screen_xr.yaml
-2026-07-06 13:58:42.631 | INFO     | __main__:main:188 - ============================================================
-2026-07-06 13:58:42.631 | INFO     | __main__:main:189 - Teleop Camera App
-2026-07-06 13:58:42.631 | INFO     | __main__:main:190 - ============================================================
-2026-07-06 13:58:42.631 | INFO     | __main__:main:191 - Source: local
-2026-07-06 13:58:42.632 | INFO     | __main__:main:192 - Display mode: xr
-2026-07-06 13:58:42.632 | INFO     | __main__:main:193 - Cameras: 1
-2026-07-06 13:58:42.632 | INFO     | __main__:main:197 -   sim_screen (mono): mono:0
-2026-07-06 13:58:42.632 | INFO     | __main__:main:198 - ============================================================
-2026-07-06 13:58:42.632 | INFO     | __main__:main:199 - Press Ctrl+C to stop
+2026-07-07 07:23:58.897 | INFO     | __main__:_reexec_self:102 - Re-executing for clean process state...
+2026-07-07 07:23:59.525 | INFO     | __main__:main:166 - Loading config from: /config/newton_sim_screen_xr.yaml
+2026-07-07 07:23:59.568 | INFO     | __main__:main:188 - ============================================================
+2026-07-07 07:23:59.568 | INFO     | __main__:main:189 - Teleop Camera App
+2026-07-07 07:23:59.568 | INFO     | __main__:main:190 - ============================================================
+2026-07-07 07:23:59.569 | INFO     | __main__:main:191 - Source: local
+2026-07-07 07:23:59.569 | INFO     | __main__:main:192 - Display mode: xr
+2026-07-07 07:23:59.569 | INFO     | __main__:main:193 - Cameras: 1
+2026-07-07 07:23:59.569 | INFO     | __main__:main:197 -   sim_screen (mono): mono:0
+2026-07-07 07:23:59.569 | INFO     | __main__:main:198 - ============================================================
+2026-07-07 07:23:59.569 | INFO     | __main__:main:199 - Press Ctrl+C to stop
 [info] [fragment.cpp:1116] Loading extensions from configs...
 [info] [gxf_executor.cpp:433] Creating context
-2026-07-06 13:58:42.664 | INFO     | teleop_camera_subgraph:_compose_local_sources:403 - Adding local camera: sim_screen (v4l2)
-2026-07-06 13:58:42.665 | INFO     | camera_sources:create_v4l2_source:309 -   V4L2 source: sim_screen /dev/video44 1280x720@0fps
-2026-07-06 13:58:42.668 | INFO     | teleop_camera_subgraph:_compose_xr_mode:816 - XR mode: 1 camera planes (single Vulkan context), hand skeleton overlay=enabled
-2026-07-06 13:58:42.668 | INFO     | teleop_camera_subgraph:compose:394 - Teleop camera subgraph: mode=xr
+2026-07-07 07:23:59.598 | INFO     | teleop_camera_subgraph:_compose_local_sources:403 - Adding local camera: sim_screen (v4l2)
+2026-07-07 07:23:59.598 | INFO     | camera_sources:create_v4l2_source:309 -   V4L2 source: sim_screen /dev/video44 1280x720@0fps
+2026-07-07 07:23:59.603 | INFO     | teleop_camera_subgraph:_compose_xr_mode:816 - XR mode: 1 camera planes (single Vulkan context), hand skeleton overlay=enabled
+2026-07-07 07:23:59.603 | INFO     | teleop_camera_subgraph:compose:394 - Teleop camera subgraph: mode=xr
 LOG in xrCreateInstance: Instance created
 	createInfo->applicationInfo.applicationName: Holoscan XR
 	createInfo->applicationInfo.applicationVersion: 0
@@ -390,253 +390,25 @@ LOG in xrCreateInstance: Instance created
 [error] [component.cpp:89] Component 'teleop_camera_xr_plane_renderer': failed to set argument - Argument 'xr_session': xr::Instance::getSystem: ErrorFormFactorUnavailable
 [error] [gxf_executor.cpp:1616] Exception occurred during initialization of operator: 'teleop_camera_xr_plane_renderer' - Component 'teleop_camera_xr_plane_renderer': failed to set 1 argument(s):
   - Argument 'xr_session': xr::Instance::getSystem: ErrorFormFactorUnavailable
-2026-07-06 13:58:42.875 | WARNING  | __main__:_reexec_self:100 - XR runtime not ready yet. Component 'teleop_camera_xr_plane_renderer': failed to set 1 argument(s):
+2026-07-07 07:23:59.802 | WARNING  | __main__:_reexec_self:100 - XR runtime not ready yet. Component 'teleop_camera_xr_plane_renderer': failed to set 1 argument(s):
   - Argument 'xr_session': xr::Instance::getSystem: ErrorFormFactorUnavailable Retrying in 2.0s... (attempt 10)
-2026-07-06 13:58:44.875 | INFO     | __main__:_reexec_self:102 - Re-executing for clean process state...
-2026-07-06 13:58:45.440 | INFO     | __main__:main:166 - Loading config from: /config/newton_sim_screen_xr.yaml
-2026-07-06 13:58:45.484 | INFO     | __main__:main:188 - ============================================================
-2026-07-06 13:58:45.484 | INFO     | __main__:main:189 - Teleop Camera App
-2026-07-06 13:58:45.484 | INFO     | __main__:main:190 - ============================================================
-2026-07-06 13:58:45.484 | INFO     | __main__:main:191 - Source: local
-2026-07-06 13:58:45.484 | INFO     | __main__:main:192 - Display mode: xr
-2026-07-06 13:58:45.484 | INFO     | __main__:main:193 - Cameras: 1
-2026-07-06 13:58:45.484 | INFO     | __main__:main:197 -   sim_screen (mono): mono:0
-2026-07-06 13:58:45.484 | INFO     | __main__:main:198 - ============================================================
-2026-07-06 13:58:45.484 | INFO     | __main__:main:199 - Press Ctrl+C to stop
+2026-07-07 07:24:01.803 | INFO     | __main__:_reexec_self:102 - Re-executing for clean process state...
+2026-07-07 07:24:02.367 | INFO     | __main__:main:166 - Loading config from: /config/newton_sim_screen_xr.yaml
+2026-07-07 07:24:02.410 | INFO     | __main__:main:188 - ============================================================
+2026-07-07 07:24:02.410 | INFO     | __main__:main:189 - Teleop Camera App
+2026-07-07 07:24:02.411 | INFO     | __main__:main:190 - ============================================================
+2026-07-07 07:24:02.411 | INFO     | __main__:main:191 - Source: local
+2026-07-07 07:24:02.411 | INFO     | __main__:main:192 - Display mode: xr
+2026-07-07 07:24:02.411 | INFO     | __main__:main:193 - Cameras: 1
+2026-07-07 07:24:02.411 | INFO     | __main__:main:197 -   sim_screen (mono): mono:0
+2026-07-07 07:24:02.411 | INFO     | __main__:main:198 - ============================================================
+2026-07-07 07:24:02.411 | INFO     | __main__:main:199 - Press Ctrl+C to stop
 [info] [fragment.cpp:1116] Loading extensions from configs...
 [info] [gxf_executor.cpp:433] Creating context
-2026-07-06 13:58:45.513 | INFO     | teleop_camera_subgraph:_compose_local_sources:403 - Adding local camera: sim_screen (v4l2)
-2026-07-06 13:58:45.513 | INFO     | camera_sources:create_v4l2_source:309 -   V4L2 source: sim_screen /dev/video44 1280x720@0fps
-2026-07-06 13:58:45.518 | INFO     | teleop_camera_subgraph:_compose_xr_mode:816 - XR mode: 1 camera planes (single Vulkan context), hand skeleton overlay=enabled
-2026-07-06 13:58:45.518 | INFO     | teleop_camera_subgraph:compose:394 - Teleop camera subgraph: mode=xr
-LOG in xrCreateInstance: Instance created
-	createInfo->applicationInfo.applicationName: Holoscan XR
-	createInfo->applicationInfo.applicationVersion: 0
-	createInfo->applicationInfo.engineName: Holoscan XR
-	createInfo->applicationInfo.engineVersion: 1
-	createInfo->applicationInfo.apiVersion: 1.0.0
-	appinfo.detected.engine.name: (null)
-	appinfo.detected.engine.version: 0.0.0
-	quirks.disable_vulkan_format_depth: false
-	quirks.disable_vulkan_format_depth_stencil: false
-	quirks.disable_quad_views: false
-	quirks.no_validation_error_in_create_ref_space: true
-	quirks.skip_end_session: false
-	quirks.parallel_views: false
-	quirks.no_texture_source_alpha: false
-
-[error] [component.cpp:89] Component 'teleop_camera_xr_plane_renderer': failed to set argument - Argument 'xr_session': xr::Instance::getSystem: ErrorFormFactorUnavailable
-[error] [gxf_executor.cpp:1616] Exception occurred during initialization of operator: 'teleop_camera_xr_plane_renderer' - Component 'teleop_camera_xr_plane_renderer': failed to set 1 argument(s):
-  - Argument 'xr_session': xr::Instance::getSystem: ErrorFormFactorUnavailable
-2026-07-06 13:58:45.729 | WARNING  | __main__:_reexec_self:100 - XR runtime not ready yet. Component 'teleop_camera_xr_plane_renderer': failed to set 1 argument(s):
-  - Argument 'xr_session': xr::Instance::getSystem: ErrorFormFactorUnavailable Retrying in 2.0s... (attempt 11)
-2026-07-06 13:58:47.729 | INFO     | __main__:_reexec_self:102 - Re-executing for clean process state...
-2026-07-06 13:58:48.367 | INFO     | __main__:main:166 - Loading config from: /config/newton_sim_screen_xr.yaml
-2026-07-06 13:58:48.411 | INFO     | __main__:main:188 - ============================================================
-2026-07-06 13:58:48.412 | INFO     | __main__:main:189 - Teleop Camera App
-2026-07-06 13:58:48.412 | INFO     | __main__:main:190 - ============================================================
-2026-07-06 13:58:48.412 | INFO     | __main__:main:191 - Source: local
-2026-07-06 13:58:48.412 | INFO     | __main__:main:192 - Display mode: xr
-2026-07-06 13:58:48.412 | INFO     | __main__:main:193 - Cameras: 1
-2026-07-06 13:58:48.412 | INFO     | __main__:main:197 -   sim_screen (mono): mono:0
-2026-07-06 13:58:48.412 | INFO     | __main__:main:198 - ============================================================
-2026-07-06 13:58:48.412 | INFO     | __main__:main:199 - Press Ctrl+C to stop
-[info] [fragment.cpp:1116] Loading extensions from configs...
-[info] [gxf_executor.cpp:433] Creating context
-2026-07-06 13:58:48.445 | INFO     | teleop_camera_subgraph:_compose_local_sources:403 - Adding local camera: sim_screen (v4l2)
-2026-07-06 13:58:48.445 | INFO     | camera_sources:create_v4l2_source:309 -   V4L2 source: sim_screen /dev/video44 1280x720@0fps
-2026-07-06 13:58:48.450 | INFO     | teleop_camera_subgraph:_compose_xr_mode:816 - XR mode: 1 camera planes (single Vulkan context), hand skeleton overlay=enabled
-2026-07-06 13:58:48.450 | INFO     | teleop_camera_subgraph:compose:394 - Teleop camera subgraph: mode=xr
-LOG in xrCreateInstance: Instance created
-	createInfo->applicationInfo.applicationName: Holoscan XR
-	createInfo->applicationInfo.applicationVersion: 0
-	createInfo->applicationInfo.engineName: Holoscan XR
-	createInfo->applicationInfo.engineVersion: 1
-	createInfo->applicationInfo.apiVersion: 1.0.0
-	appinfo.detected.engine.name: (null)
-	appinfo.detected.engine.version: 0.0.0
-	quirks.disable_vulkan_format_depth: false
-	quirks.disable_vulkan_format_depth_stencil: false
-	quirks.disable_quad_views: false
-	quirks.no_validation_error_in_create_ref_space: true
-	quirks.skip_end_session: false
-	quirks.parallel_views: false
-	quirks.no_texture_source_alpha: false
-
-[error] [component.cpp:89] Component 'teleop_camera_xr_plane_renderer': failed to set argument - Argument 'xr_session': xr::Instance::getSystem: ErrorFormFactorUnavailable
-[error] [gxf_executor.cpp:1616] Exception occurred during initialization of operator: 'teleop_camera_xr_plane_renderer' - Component 'teleop_camera_xr_plane_renderer': failed to set 1 argument(s):
-  - Argument 'xr_session': xr::Instance::getSystem: ErrorFormFactorUnavailable
-2026-07-06 13:58:48.691 | WARNING  | __main__:_reexec_self:100 - XR runtime not ready yet. Component 'teleop_camera_xr_plane_renderer': failed to set 1 argument(s):
-  - Argument 'xr_session': xr::Instance::getSystem: ErrorFormFactorUnavailable Retrying in 2.0s... (attempt 12)
-2026-07-06 13:58:50.691 | INFO     | __main__:_reexec_self:102 - Re-executing for clean process state...
-2026-07-06 13:58:51.270 | INFO     | __main__:main:166 - Loading config from: /config/newton_sim_screen_xr.yaml
-2026-07-06 13:58:51.314 | INFO     | __main__:main:188 - ============================================================
-2026-07-06 13:58:51.314 | INFO     | __main__:main:189 - Teleop Camera App
-2026-07-06 13:58:51.314 | INFO     | __main__:main:190 - ============================================================
-2026-07-06 13:58:51.314 | INFO     | __main__:main:191 - Source: local
-2026-07-06 13:58:51.314 | INFO     | __main__:main:192 - Display mode: xr
-2026-07-06 13:58:51.314 | INFO     | __main__:main:193 - Cameras: 1
-2026-07-06 13:58:51.314 | INFO     | __main__:main:197 -   sim_screen (mono): mono:0
-2026-07-06 13:58:51.314 | INFO     | __main__:main:198 - ============================================================
-2026-07-06 13:58:51.314 | INFO     | __main__:main:199 - Press Ctrl+C to stop
-[info] [fragment.cpp:1116] Loading extensions from configs...
-[info] [gxf_executor.cpp:433] Creating context
-2026-07-06 13:58:51.350 | INFO     | teleop_camera_subgraph:_compose_local_sources:403 - Adding local camera: sim_screen (v4l2)
-2026-07-06 13:58:51.351 | INFO     | camera_sources:create_v4l2_source:309 -   V4L2 source: sim_screen /dev/video44 1280x720@0fps
-2026-07-06 13:58:51.355 | INFO     | teleop_camera_subgraph:_compose_xr_mode:816 - XR mode: 1 camera planes (single Vulkan context), hand skeleton overlay=enabled
-2026-07-06 13:58:51.355 | INFO     | teleop_camera_subgraph:compose:394 - Teleop camera subgraph: mode=xr
-LOG in xrCreateInstance: Instance created
-	createInfo->applicationInfo.applicationName: Holoscan XR
-	createInfo->applicationInfo.applicationVersion: 0
-	createInfo->applicationInfo.engineName: Holoscan XR
-	createInfo->applicationInfo.engineVersion: 1
-	createInfo->applicationInfo.apiVersion: 1.0.0
-	appinfo.detected.engine.name: (null)
-	appinfo.detected.engine.version: 0.0.0
-	quirks.disable_vulkan_format_depth: false
-	quirks.disable_vulkan_format_depth_stencil: false
-	quirks.disable_quad_views: false
-	quirks.no_validation_error_in_create_ref_space: true
-	quirks.skip_end_session: false
-	quirks.parallel_views: false
-	quirks.no_texture_source_alpha: false
-
-[error] [component.cpp:89] Component 'teleop_camera_xr_plane_renderer': failed to set argument - Argument 'xr_session': xr::Instance::getSystem: ErrorFormFactorUnavailable
-[error] [gxf_executor.cpp:1616] Exception occurred during initialization of operator: 'teleop_camera_xr_plane_renderer' - Component 'teleop_camera_xr_plane_renderer': failed to set 1 argument(s):
-  - Argument 'xr_session': xr::Instance::getSystem: ErrorFormFactorUnavailable
-2026-07-06 13:58:51.698 | WARNING  | __main__:_reexec_self:100 - XR runtime not ready yet. Component 'teleop_camera_xr_plane_renderer': failed to set 1 argument(s):
-  - Argument 'xr_session': xr::Instance::getSystem: ErrorFormFactorUnavailable Retrying in 2.0s... (attempt 13)
-2026-07-06 13:58:53.698 | INFO     | __main__:_reexec_self:102 - Re-executing for clean process state...
-2026-07-06 13:58:54.252 | INFO     | __main__:main:166 - Loading config from: /config/newton_sim_screen_xr.yaml
-2026-07-06 13:58:54.296 | INFO     | __main__:main:188 - ============================================================
-2026-07-06 13:58:54.296 | INFO     | __main__:main:189 - Teleop Camera App
-2026-07-06 13:58:54.296 | INFO     | __main__:main:190 - ============================================================
-2026-07-06 13:58:54.296 | INFO     | __main__:main:191 - Source: local
-2026-07-06 13:58:54.296 | INFO     | __main__:main:192 - Display mode: xr
-2026-07-06 13:58:54.297 | INFO     | __main__:main:193 - Cameras: 1
-2026-07-06 13:58:54.297 | INFO     | __main__:main:197 -   sim_screen (mono): mono:0
-2026-07-06 13:58:54.297 | INFO     | __main__:main:198 - ============================================================
-2026-07-06 13:58:54.297 | INFO     | __main__:main:199 - Press Ctrl+C to stop
-[info] [fragment.cpp:1116] Loading extensions from configs...
-[info] [gxf_executor.cpp:433] Creating context
-2026-07-06 13:58:54.324 | INFO     | teleop_camera_subgraph:_compose_local_sources:403 - Adding local camera: sim_screen (v4l2)
-2026-07-06 13:58:54.325 | INFO     | camera_sources:create_v4l2_source:309 -   V4L2 source: sim_screen /dev/video44 1280x720@0fps
-2026-07-06 13:58:54.329 | INFO     | teleop_camera_subgraph:_compose_xr_mode:816 - XR mode: 1 camera planes (single Vulkan context), hand skeleton overlay=enabled
-2026-07-06 13:58:54.329 | INFO     | teleop_camera_subgraph:compose:394 - Teleop camera subgraph: mode=xr
-LOG in xrCreateInstance: Instance created
-	createInfo->applicationInfo.applicationName: Holoscan XR
-	createInfo->applicationInfo.applicationVersion: 0
-	createInfo->applicationInfo.engineName: Holoscan XR
-	createInfo->applicationInfo.engineVersion: 1
-	createInfo->applicationInfo.apiVersion: 1.0.0
-	appinfo.detected.engine.name: (null)
-	appinfo.detected.engine.version: 0.0.0
-	quirks.disable_vulkan_format_depth: false
-	quirks.disable_vulkan_format_depth_stencil: false
-	quirks.disable_quad_views: false
-	quirks.no_validation_error_in_create_ref_space: true
-	quirks.skip_end_session: false
-	quirks.parallel_views: false
-	quirks.no_texture_source_alpha: false
-
-[error] [component.cpp:89] Component 'teleop_camera_xr_plane_renderer': failed to set argument - Argument 'xr_session': xr::Instance::getSystem: ErrorFormFactorUnavailable
-[error] [gxf_executor.cpp:1616] Exception occurred during initialization of operator: 'teleop_camera_xr_plane_renderer' - Component 'teleop_camera_xr_plane_renderer': failed to set 1 argument(s):
-  - Argument 'xr_session': xr::Instance::getSystem: ErrorFormFactorUnavailable
-2026-07-06 13:58:54.551 | WARNING  | __main__:_reexec_self:100 - XR runtime not ready yet. Component 'teleop_camera_xr_plane_renderer': failed to set 1 argument(s):
-  - Argument 'xr_session': xr::Instance::getSystem: ErrorFormFactorUnavailable Retrying in 2.0s... (attempt 14)
-2026-07-06 13:58:56.552 | INFO     | __main__:_reexec_self:102 - Re-executing for clean process state...
-2026-07-06 13:58:57.107 | INFO     | __main__:main:166 - Loading config from: /config/newton_sim_screen_xr.yaml
-2026-07-06 13:58:57.149 | INFO     | __main__:main:188 - ============================================================
-2026-07-06 13:58:57.149 | INFO     | __main__:main:189 - Teleop Camera App
-2026-07-06 13:58:57.149 | INFO     | __main__:main:190 - ============================================================
-2026-07-06 13:58:57.149 | INFO     | __main__:main:191 - Source: local
-2026-07-06 13:58:57.149 | INFO     | __main__:main:192 - Display mode: xr
-2026-07-06 13:58:57.149 | INFO     | __main__:main:193 - Cameras: 1
-2026-07-06 13:58:57.149 | INFO     | __main__:main:197 -   sim_screen (mono): mono:0
-2026-07-06 13:58:57.149 | INFO     | __main__:main:198 - ============================================================
-2026-07-06 13:58:57.149 | INFO     | __main__:main:199 - Press Ctrl+C to stop
-[info] [fragment.cpp:1116] Loading extensions from configs...
-[info] [gxf_executor.cpp:433] Creating context
-2026-07-06 13:58:57.181 | INFO     | teleop_camera_subgraph:_compose_local_sources:403 - Adding local camera: sim_screen (v4l2)
-2026-07-06 13:58:57.181 | INFO     | camera_sources:create_v4l2_source:309 -   V4L2 source: sim_screen /dev/video44 1280x720@0fps
-2026-07-06 13:58:57.186 | INFO     | teleop_camera_subgraph:_compose_xr_mode:816 - XR mode: 1 camera planes (single Vulkan context), hand skeleton overlay=enabled
-2026-07-06 13:58:57.186 | INFO     | teleop_camera_subgraph:compose:394 - Teleop camera subgraph: mode=xr
-LOG in xrCreateInstance: Instance created
-	createInfo->applicationInfo.applicationName: Holoscan XR
-	createInfo->applicationInfo.applicationVersion: 0
-	createInfo->applicationInfo.engineName: Holoscan XR
-	createInfo->applicationInfo.engineVersion: 1
-	createInfo->applicationInfo.apiVersion: 1.0.0
-	appinfo.detected.engine.name: (null)
-	appinfo.detected.engine.version: 0.0.0
-	quirks.disable_vulkan_format_depth: false
-	quirks.disable_vulkan_format_depth_stencil: false
-	quirks.disable_quad_views: false
-	quirks.no_validation_error_in_create_ref_space: true
-	quirks.skip_end_session: false
-	quirks.parallel_views: false
-	quirks.no_texture_source_alpha: false
-
-[error] [component.cpp:89] Component 'teleop_camera_xr_plane_renderer': failed to set argument - Argument 'xr_session': xr::Instance::getSystem: ErrorFormFactorUnavailable
-[error] [gxf_executor.cpp:1616] Exception occurred during initialization of operator: 'teleop_camera_xr_plane_renderer' - Component 'teleop_camera_xr_plane_renderer': failed to set 1 argument(s):
-  - Argument 'xr_session': xr::Instance::getSystem: ErrorFormFactorUnavailable
-2026-07-06 13:58:57.408 | WARNING  | __main__:_reexec_self:100 - XR runtime not ready yet. Component 'teleop_camera_xr_plane_renderer': failed to set 1 argument(s):
-  - Argument 'xr_session': xr::Instance::getSystem: ErrorFormFactorUnavailable Retrying in 2.0s... (attempt 15)
-2026-07-06 13:58:59.408 | INFO     | __main__:_reexec_self:102 - Re-executing for clean process state...
-2026-07-06 13:58:59.969 | INFO     | __main__:main:166 - Loading config from: /config/newton_sim_screen_xr.yaml
-2026-07-06 13:59:00.012 | INFO     | __main__:main:188 - ============================================================
-2026-07-06 13:59:00.012 | INFO     | __main__:main:189 - Teleop Camera App
-2026-07-06 13:59:00.013 | INFO     | __main__:main:190 - ============================================================
-2026-07-06 13:59:00.013 | INFO     | __main__:main:191 - Source: local
-2026-07-06 13:59:00.013 | INFO     | __main__:main:192 - Display mode: xr
-2026-07-06 13:59:00.013 | INFO     | __main__:main:193 - Cameras: 1
-2026-07-06 13:59:00.013 | INFO     | __main__:main:197 -   sim_screen (mono): mono:0
-2026-07-06 13:59:00.013 | INFO     | __main__:main:198 - ============================================================
-2026-07-06 13:59:00.013 | INFO     | __main__:main:199 - Press Ctrl+C to stop
-[info] [fragment.cpp:1116] Loading extensions from configs...
-[info] [gxf_executor.cpp:433] Creating context
-2026-07-06 13:59:00.047 | INFO     | teleop_camera_subgraph:_compose_local_sources:403 - Adding local camera: sim_screen (v4l2)
-2026-07-06 13:59:00.048 | INFO     | camera_sources:create_v4l2_source:309 -   V4L2 source: sim_screen /dev/video44 1280x720@0fps
-2026-07-06 13:59:00.052 | INFO     | teleop_camera_subgraph:_compose_xr_mode:816 - XR mode: 1 camera planes (single Vulkan context), hand skeleton overlay=enabled
-2026-07-06 13:59:00.053 | INFO     | teleop_camera_subgraph:compose:394 - Teleop camera subgraph: mode=xr
-LOG in xrCreateInstance: Instance created
-	createInfo->applicationInfo.applicationName: Holoscan XR
-	createInfo->applicationInfo.applicationVersion: 0
-	createInfo->applicationInfo.engineName: Holoscan XR
-	createInfo->applicationInfo.engineVersion: 1
-	createInfo->applicationInfo.apiVersion: 1.0.0
-	appinfo.detected.engine.name: (null)
-	appinfo.detected.engine.version: 0.0.0
-	quirks.disable_vulkan_format_depth: false
-	quirks.disable_vulkan_format_depth_stencil: false
-	quirks.disable_quad_views: false
-	quirks.no_validation_error_in_create_ref_space: true
-	quirks.skip_end_session: false
-	quirks.parallel_views: false
-	quirks.no_texture_source_alpha: false
-
-[error] [component.cpp:89] Component 'teleop_camera_xr_plane_renderer': failed to set argument - Argument 'xr_session': xr::Instance::getSystem: ErrorFormFactorUnavailable
-[error] [gxf_executor.cpp:1616] Exception occurred during initialization of operator: 'teleop_camera_xr_plane_renderer' - Component 'teleop_camera_xr_plane_renderer': failed to set 1 argument(s):
-  - Argument 'xr_session': xr::Instance::getSystem: ErrorFormFactorUnavailable
-2026-07-06 13:59:00.312 | WARNING  | __main__:_reexec_self:100 - XR runtime not ready yet. Component 'teleop_camera_xr_plane_renderer': failed to set 1 argument(s):
-  - Argument 'xr_session': xr::Instance::getSystem: ErrorFormFactorUnavailable Retrying in 2.0s... (attempt 16)
-2026-07-06 13:59:02.312 | INFO     | __main__:_reexec_self:102 - Re-executing for clean process state...
-2026-07-06 13:59:02.872 | INFO     | __main__:main:166 - Loading config from: /config/newton_sim_screen_xr.yaml
-2026-07-06 13:59:02.916 | INFO     | __main__:main:188 - ============================================================
-2026-07-06 13:59:02.917 | INFO     | __main__:main:189 - Teleop Camera App
-2026-07-06 13:59:02.917 | INFO     | __main__:main:190 - ============================================================
-2026-07-06 13:59:02.917 | INFO     | __main__:main:191 - Source: local
-2026-07-06 13:59:02.917 | INFO     | __main__:main:192 - Display mode: xr
-2026-07-06 13:59:02.917 | INFO     | __main__:main:193 - Cameras: 1
-2026-07-06 13:59:02.917 | INFO     | __main__:main:197 -   sim_screen (mono): mono:0
-2026-07-06 13:59:02.917 | INFO     | __main__:main:198 - ============================================================
-2026-07-06 13:59:02.918 | INFO     | __main__:main:199 - Press Ctrl+C to stop
-[info] [fragment.cpp:1116] Loading extensions from configs...
-[info] [gxf_executor.cpp:433] Creating context
-2026-07-06 13:59:02.946 | INFO     | teleop_camera_subgraph:_compose_local_sources:403 - Adding local camera: sim_screen (v4l2)
-2026-07-06 13:59:02.947 | INFO     | camera_sources:create_v4l2_source:309 -   V4L2 source: sim_screen /dev/video44 1280x720@0fps
-2026-07-06 13:59:02.951 | INFO     | teleop_camera_subgraph:_compose_xr_mode:816 - XR mode: 1 camera planes (single Vulkan context), hand skeleton overlay=enabled
-2026-07-06 13:59:02.951 | INFO     | teleop_camera_subgraph:compose:394 - Teleop camera subgraph: mode=xr
+2026-07-07 07:24:02.440 | INFO     | teleop_camera_subgraph:_compose_local_sources:403 - Adding local camera: sim_screen (v4l2)
+2026-07-07 07:24:02.440 | INFO     | camera_sources:create_v4l2_source:309 -   V4L2 source: sim_screen /dev/video44 1280x720@0fps
+2026-07-07 07:24:02.444 | INFO     | teleop_camera_subgraph:_compose_xr_mode:816 - XR mode: 1 camera planes (single Vulkan context), hand skeleton overlay=enabled
+2026-07-07 07:24:02.445 | INFO     | teleop_camera_subgraph:compose:394 - Teleop camera subgraph: mode=xr
 LOG in xrCreateInstance: Instance created
 	createInfo->applicationInfo.applicationName: Holoscan XR
 	createInfo->applicationInfo.applicationVersion: 0
@@ -666,7 +438,7 @@ LOG in xrGetSystem: Selected devices
 	Hand-Tracking Right (conforming): '<none>'
 LOG in xrCreateVulkanInstanceKHR: Creation of VkInstance:
 	result: VK_SUCCESS
-	vulkanInstance: 0x8ab81b0
+	vulkanInstance: 0x3ae5fd50
 	extensions:
 		VK_KHR_external_fence_capabilities
 		VK_KHR_external_memory_capabilities
@@ -675,8 +447,8 @@ LOG in xrCreateVulkanInstanceKHR: Creation of VkInstance:
 		VK_EXT_debug_utils
 LOG in xrGetVulkanGraphicsDeviceKHR: Creation of VkDevice:
 	result: VK_SUCCESS
-	vulkanDevice: 0x8b1d270
-	vulkanInstance: 0x8ab81b0
+	vulkanDevice: 0x3aec73c0
+	vulkanInstance: 0x3ae5fd50
 	external_fence_fd: true
 	external_semaphore_fd: true
 	timelineSemaphore: true
@@ -783,17 +555,17 @@ XR_ERROR_FEATURE_UNSUPPORTED in xrCreateHandTrackerEXT: Did not find any hand-tr
 XR_ERROR_FEATURE_UNSUPPORTED in xrCreateHandTrackerEXT: Did not find any hand-tracking inputs on XDev that matched the given hand.
 [info] [xr_plane_renderer_op.cpp:637] XrPlaneRendererOp: XDev hand trackers ready left_candidates=3 right_candidates=3
 [warning] [cuda_stream_handler.cpp:241] Parameter `cuda_stream_pool` is not set, using the default CUDA stream for CUDA operations.
-ERROR [ipc_receive] recvmsg(33) failed: '104' 'Connection reset by peer'!
-ERROR [ipc_compositor_wait_frame] ipc_call_compositor_wait_woke failed: XRT_ERROR_IPC_FAILURE [/builds/cloudxr/cloudxr-openxr-runtime/deps/monado/src/xrt/ipc/client/ipc_client_compositor.c:569]
+ERROR [ipc_send] sendmsg(33) failed: '32' 'Broken pipe'!
+ERROR [ipc_compositor_wait_frame] ipc_call_compositor_predict_frame failed: XRT_ERROR_IPC_FAILURE [/builds/cloudxr/cloudxr-openxr-runtime/deps/monado/src/xrt/ipc/client/ipc_client_compositor.c:562]
 XR_ERROR_INSTANCE_LOST in xrWaitFrame: Call to xrt_comp_wait_frame failed
 [error] [gxf_wrapper.cpp:158] Exception occurred for operator: 'teleop_camera_xr_begin_frame' - xr::Session::waitFrame: ErrorInstanceLost
 [error] [entity_executor.cpp:749] Failed to tick codelet teleop_camera_xr_begin_frame in entity: teleop_camera_xr_begin_frame code: GXF_FAILURE
 [warning] [event_based_scheduler.cpp:558] Error while executing entity E55 named 'teleop_camera_xr_begin_frame': GXF_FAILURE
 [info] [event_based_scheduler.cpp:994] Stopping all async jobs
-[info] [event_based_scheduler.cpp:566] Worker thread with id [0] exiting
+[info] [event_based_scheduler.cpp:566] Worker thread with id [2] exiting
+[info] [event_based_scheduler.cpp:641] Async event handler thread exiting.
 [info] [event_based_scheduler.cpp:456] Dispatcher thread has stopped checking jobs
 [info] [event_based_scheduler.cpp:973] Waiting to join all async threads
-[info] [event_based_scheduler.cpp:641] Async event handler thread exiting.
 [info] [gxf_executor.cpp:2490] Interrupt signal received. Shutting down gracefully...
 [info] [event_based_scheduler.cpp:910] Stopping Event Based scheduler
 [info] [event_based_scheduler.cpp:994] Stopping all async jobs
@@ -808,7 +580,7 @@ ERROR [ipc_compositor_swapchain_destroy] ipc_call_compositor_semaphore_destroy f
 [error] [program.cpp:580] wait failed. Deactivating...
 [error] [runtime.cpp:1647] Graph interrupt failed with error: GXF_FAILURE
 [error] [gxf_executor.cpp:355] GxfGraphInterrupt Error: GXF_FAILURE
-[info] [event_based_scheduler.cpp:728] Total execution time of Event Based scheduler : 216820.092324 ms
+[info] [event_based_scheduler.cpp:728] Total execution time of Event Based scheduler : 148207.026036 ms
 
 [warning] [entity_warden.cpp:575] Component of type nvidia::gxf::EventBasedScheduler, cid 5 failed to deinitialize with code GXF_FAILURE
 [error] [runtime.cpp:797] Could not deinitialize entity 'scheduler' (E4): GXF_FAILURE
