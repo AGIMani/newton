@@ -131,6 +131,9 @@ class FullPoseDifferentialIkController:
         self._target = None
         self.reset_orientation_alignment()
         self._last_joint_velocity_rad_s = None
+        solver_reset = getattr(self.config.dls_step_solver, "reset", None)
+        if callable(solver_reset):
+            solver_reset()
         if len(robot_state.joint_positions_rad) == 0:
             raise ValueError("robot_state.joint_positions_rad must not be empty.")
 

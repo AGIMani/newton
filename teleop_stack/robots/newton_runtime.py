@@ -277,9 +277,59 @@ def _full_pose_dls_solve_kernel(
             qd_index = arm_joint_qd_indices[i]
             if qd_index >= 0:
                 target_joint_qd[qd_index] = dq_cmd
+            previous_velocity[i] = dq_cmd
             i = i + 1
 
     status[0] = int(1)
+
+
+@wp.kernel(enable_backward=False)
+def _gather_arm_joint_state_kernel(
+    joint_q: wp.array[wp.float32],
+    joint_qd: wp.array[wp.float32],
+    arm_joint_q_indices: wp.array[wp.int32],
+    arm_joint_qd_indices: wp.array[wp.int32],
+    arm_joint_q_out: wp.array[wp.float32],
+    arm_joint_qd_out: wp.array[wp.float32],
+):
+    joint_index = wp.tid()
+    arm_joint_q_out[joint_index] = joint_q[arm_joint_q_indices[joint_index]]
+    arm_joint_qd_out[joint_index] = joint_qd[arm_joint_qd_indices[joint_index]]
+
+
+@wp.kernel(enable_backward=False)
+def _write_hand_target_slices_kernel(
+    current_joint_q: wp.array[wp.float32],
+    hand_joint_q_indices: wp.array[wp.int32],
+    hand_joint_qd_indices: wp.array[wp.int32],
+    hand_joint_targets: wp.array[wp.float32],
+    target_joint_q: wp.array[wp.float32],
+    target_joint_qd: wp.array[wp.float32],
+    count: int,
+    max_step_rad: float,
+    frame_dt: float,
+    publish_kinematic_velocity: int,
+):
+    slot = wp.tid()
+    if slot >= count:
+        return
+
+    q_index = hand_joint_q_indices[slot]
+    if q_index < 0:
+        return
+
+    current_value = current_joint_q[q_index]
+    target_value = hand_joint_targets[slot]
+    if max_step_rad > 0.0:
+        target_value = wp.clamp(target_value, current_value - max_step_rad, current_value + max_step_rad)
+
+    target_joint_q[q_index] = target_value
+    qd_index = hand_joint_qd_indices[slot]
+    if qd_index >= 0:
+        if publish_kinematic_velocity != 0:
+            target_joint_qd[qd_index] = (target_value - current_value) / frame_dt
+        else:
+            target_joint_qd[qd_index] = 0.0
 
 
 @wp.kernel(enable_backward=False)
@@ -577,15 +627,23 @@ class NewtonLinkKinematicsModel:
 
 
 class NewtonGpuFullPoseDlsStepSolver:
-    def __init__(self, *, device: Any):
+    def __init__(self, *, device: Any, result_readback_stride: int = 1):
         self.device = device
         self.last_wrote_joint_targets = False
+        self.last_result_was_synced = False
+        self._result_readback_stride = max(1, int(result_readback_stride))
+        self._solve_count = 0
+        self._has_previous_velocity = False
+        self._last_q_cmd_host = np.zeros(7, dtype=np.float32)
+        self._last_dq_cmd_host = np.zeros(7, dtype=np.float32)
+        self._last_unclipped_q_cmd_host = np.zeros(7, dtype=np.float32)
+        self._last_acceleration_limited = False
+        self._last_clipped = False
         self._spatial_host = np.zeros((6, 7), dtype=np.float32)
         self._position_error_host = np.zeros(3, dtype=np.float32)
         self._orientation_error_host = np.zeros(3, dtype=np.float32)
         self._bias_step_host = np.zeros(7, dtype=np.float32)
         self._current_q_host = np.zeros(7, dtype=np.float32)
-        self._previous_velocity_host = np.zeros(7, dtype=np.float32)
         self._lower_limits_host = np.zeros(7, dtype=np.float32)
         self._upper_limits_host = np.zeros(7, dtype=np.float32)
         self._spatial_wp = wp.zeros((6, 7), dtype=wp.float32, device=device)
@@ -612,6 +670,18 @@ class NewtonGpuFullPoseDlsStepSolver:
         self._dummy_target_joint_qd_wp = wp.zeros(1, dtype=wp.float32, device=device)
         self._target_joint_q_wp: wp.array | None = None
         self._target_joint_qd_wp: wp.array | None = None
+
+    def reset(self) -> None:
+        self.last_wrote_joint_targets = False
+        self.last_result_was_synced = False
+        self._solve_count = 0
+        self._has_previous_velocity = False
+        self._last_acceleration_limited = False
+        self._last_clipped = False
+        self._last_q_cmd_host.fill(0.0)
+        self._last_dq_cmd_host.fill(0.0)
+        self._last_unclipped_q_cmd_host.fill(0.0)
+        self._previous_velocity_wp.zero_()
 
     def configure_target_writer(
         self,
@@ -814,16 +884,14 @@ class NewtonGpuFullPoseDlsStepSolver:
             bias_step=bias_step,
         )
         self._current_q_host[:] = np.asarray(current_q, dtype=np.float32)
-        if previous_velocity_rad_s is not None and len(previous_velocity_rad_s) == 7:
-            has_previous_velocity = 1
-            self._previous_velocity_host[:] = np.asarray(previous_velocity_rad_s, dtype=np.float32)
-        else:
-            has_previous_velocity = 0
-            self._previous_velocity_host.fill(0.0)
+        if not self._has_previous_velocity and previous_velocity_rad_s is not None and len(previous_velocity_rad_s) == 7:
+            self._last_dq_cmd_host[:] = np.asarray(previous_velocity_rad_s, dtype=np.float32)
+            self._previous_velocity_wp.assign(self._last_dq_cmd_host)
+            self._has_previous_velocity = True
+        has_previous_velocity = 1 if self._has_previous_velocity else 0
         self._lower_limits_host[:] = np.asarray(lower_limits_rad, dtype=np.float32)
         self._upper_limits_host[:] = np.asarray(upper_limits_rad, dtype=np.float32)
         self._current_q_wp.assign(self._current_q_host)
-        self._previous_velocity_wp.assign(self._previous_velocity_host)
         self._lower_limits_wp.assign(self._lower_limits_host)
         self._upper_limits_wp.assign(self._upper_limits_host)
 
@@ -842,7 +910,51 @@ class NewtonGpuFullPoseDlsStepSolver:
             dt_s=dt_s,
             write_joint_targets=1,
         )
+        self._solve_count += 1
+        should_sync_result = self._solve_count == 1 or self._solve_count % self._result_readback_stride == 0
+        if not should_sync_result:
+            self.last_wrote_joint_targets = True
+            self.last_result_was_synced = False
+            self._has_previous_velocity = True
+            dq_step = solve_full_pose_damped_least_squares_step(
+                spatial_jacobian,
+                position_error_xyz=position_error_xyz,
+                orientation_error_rotvec=orientation_error_rotvec,
+                damping_lambda=damping_lambda,
+                position_weight=position_weight,
+                orientation_weight=orientation_weight,
+                max_position_step_m=max_position_step_m,
+                max_rotation_step_rad=max_rotation_step_rad,
+                bias_step=bias_step,
+                bias_weight=bias_weight,
+            )
+            q_cmd, dq_cmd, unclipped_q_cmd, acceleration_limited, clipped = _postprocess_joint_step_host(
+                dq_step,
+                current_q=current_q,
+                previous_velocity_rad_s=previous_velocity_rad_s,
+                lower_limits_rad=lower_limits_rad,
+                upper_limits_rad=upper_limits_rad,
+                max_joint_step_rad=max_joint_step_rad,
+                max_joint_velocity_rad_s=max_joint_velocity_rad_s,
+                max_joint_acceleration_rad_s2=max_joint_acceleration_rad_s2,
+                dt_s=dt_s,
+            )
+            self._last_q_cmd_host[:] = np.asarray(q_cmd, dtype=np.float32)
+            self._last_dq_cmd_host[:] = np.asarray(dq_cmd, dtype=np.float32)
+            self._last_unclipped_q_cmd_host[:] = np.asarray(unclipped_q_cmd, dtype=np.float32)
+            self._last_acceleration_limited = bool(acceleration_limited)
+            self._last_clipped = bool(clipped)
+            return (
+                tuple(float(v) for v in self._last_q_cmd_host),
+                tuple(float(v) for v in self._last_dq_cmd_host),
+                tuple(float(v) for v in self._last_unclipped_q_cmd_host),
+                self._last_acceleration_limited,
+                self._last_clipped,
+            )
+
+        self.last_result_was_synced = True
         if int(self._status_wp.numpy()[0]) != 1:
+            self._has_previous_velocity = False
             dq_step = solve_full_pose_damped_least_squares_step(
                 spatial_jacobian,
                 position_error_xyz=position_error_xyz,
@@ -868,13 +980,19 @@ class NewtonGpuFullPoseDlsStepSolver:
             )
 
         self.last_wrote_joint_targets = True
+        self._has_previous_velocity = True
+        self._last_q_cmd_host[:] = self._q_cmd_out_wp.numpy()
+        self._last_dq_cmd_host[:] = self._dq_cmd_out_wp.numpy()
+        self._last_unclipped_q_cmd_host[:] = self._unclipped_q_cmd_out_wp.numpy()
         flags = self._flags_wp.numpy()
+        self._last_acceleration_limited = bool(int(flags[0]))
+        self._last_clipped = bool(int(flags[1]))
         return (
-            tuple(float(v) for v in self._q_cmd_out_wp.numpy()),
-            tuple(float(v) for v in self._dq_cmd_out_wp.numpy()),
-            tuple(float(v) for v in self._unclipped_q_cmd_out_wp.numpy()),
-            bool(int(flags[0])),
-            bool(int(flags[1])),
+            tuple(float(v) for v in self._last_q_cmd_host),
+            tuple(float(v) for v in self._last_dq_cmd_host),
+            tuple(float(v) for v in self._last_unclipped_q_cmd_host),
+            self._last_acceleration_limited,
+            self._last_clipped,
         )
 
 
@@ -953,10 +1071,23 @@ class NewtonRuntimeRobotInterface(RobotInterface):
         self._target_joint_host_dirty = False
         self._arm_joint_q_indices: tuple[int, ...] = ()
         self._arm_joint_qd_indices: tuple[int, ...] = ()
+        self._arm_joint_q_indices_wp: wp.array | None = None
+        self._arm_joint_qd_indices_wp: wp.array | None = None
+        self._arm_joint_q_live_wp: wp.array | None = None
+        self._arm_joint_qd_live_wp: wp.array | None = None
+        self._arm_joint_q_live_host = np.zeros(7, dtype=np.float32)
+        self._arm_joint_qd_live_host = np.zeros(7, dtype=np.float32)
         self._joint_q_index_by_label: dict[str, int] = {}
         self._joint_qd_index_by_label: dict[str, int] = {}
         self._hand_closing_direction_by_joint: dict[str, float] = {}
         self._hand_joint_limits_by_joint: dict[str, tuple[float, float]] = {}
+        self._hand_target_capacity = 0
+        self._hand_target_q_indices_host: np.ndarray | None = None
+        self._hand_target_qd_indices_host: np.ndarray | None = None
+        self._hand_target_values_host: np.ndarray | None = None
+        self._hand_target_q_indices_wp: wp.array | None = None
+        self._hand_target_qd_indices_wp: wp.array | None = None
+        self._hand_target_values_wp: wp.array | None = None
         self._kinematics: NewtonLinkKinematicsModel | None = None
         self._ik: FullPoseDifferentialIkController | None = None
         self._last_hand_debug: dict[str, object] | None = None
@@ -1000,6 +1131,19 @@ class NewtonRuntimeRobotInterface(RobotInterface):
         self._hand_joint_limits_by_joint = _l10_joint_limits_by_joint()
         self._arm_joint_q_indices = _arm_joint_indices(self._joint_q_index_by_label, self.config.arm_side)
         self._arm_joint_qd_indices = _arm_joint_indices(self._joint_qd_index_by_label, self.config.arm_side)
+        self._arm_joint_q_indices_wp = wp.array(
+            np.asarray(self._arm_joint_q_indices, dtype=np.int32),
+            dtype=wp.int32,
+            device=model.device,
+        )
+        self._arm_joint_qd_indices_wp = wp.array(
+            np.asarray(self._arm_joint_qd_indices, dtype=np.int32),
+            dtype=wp.int32,
+            device=model.device,
+        )
+        self._arm_joint_q_live_wp = wp.zeros(7, dtype=wp.float32, device=model.device)
+        self._arm_joint_qd_live_wp = wp.zeros(7, dtype=wp.float32, device=model.device)
+        self._ensure_hand_target_buffers(int(model.joint_coord_count))
         self._kinematics = NewtonLinkKinematicsModel(
             model=model,
             side=self.config.arm_side,
@@ -1010,12 +1154,15 @@ class NewtonRuntimeRobotInterface(RobotInterface):
         self._eef_body_suffix = self.config.eef_body_suffix_by_side[self.config.arm_side]
         self._init_contact_stop_gpu_state()
         current_q = self._current_arm_q()
-        self._gpu_dls_solver = NewtonGpuFullPoseDlsStepSolver(device=model.device)
+        self._gpu_dls_solver = NewtonGpuFullPoseDlsStepSolver(
+            device=model.device,
+            result_readback_stride=self.print_every_n,
+        )
         self._gpu_dls_solver.configure_target_writer(
             arm_joint_q_indices=self._arm_joint_q_indices,
             arm_joint_qd_indices=self._arm_joint_qd_indices,
-        target_joint_q=self._target_joint_q_wp,
-        target_joint_qd=self._target_joint_qd_wp,
+            target_joint_q=self._target_joint_q_wp,
+            target_joint_qd=self._target_joint_qd_wp,
         )
         ik_config_overrides = dict(self.config.ik_config_overrides)
         ik_config_overrides.setdefault("dls_step_solver", self._gpu_dls_solver)
@@ -1042,6 +1189,19 @@ class NewtonRuntimeRobotInterface(RobotInterface):
             f" openxr_adapter={self.config.mapping.openxr_coordinate_adapter}"
             f" eef={self._eef_body_suffix}"
         )
+
+    def _ensure_hand_target_buffers(self, capacity: int) -> None:
+        capacity = max(1, int(capacity))
+        if self._hand_target_capacity >= capacity:
+            return
+        device = self.example.model.device
+        self._hand_target_capacity = capacity
+        self._hand_target_q_indices_host = np.full(capacity, -1, dtype=np.int32)
+        self._hand_target_qd_indices_host = np.full(capacity, -1, dtype=np.int32)
+        self._hand_target_values_host = np.zeros(capacity, dtype=np.float32)
+        self._hand_target_q_indices_wp = wp.zeros(capacity, dtype=wp.int32, device=device)
+        self._hand_target_qd_indices_wp = wp.zeros(capacity, dtype=wp.int32, device=device)
+        self._hand_target_values_wp = wp.zeros(capacity, dtype=wp.float32, device=device)
 
     def _init_contact_stop_gpu_state(self) -> None:
         model = self.example.model
@@ -1539,13 +1699,17 @@ class NewtonRuntimeRobotInterface(RobotInterface):
         arm_targets_written_on_gpu = bool(
             self._gpu_dls_solver is not None and self._gpu_dls_solver.last_wrote_joint_targets
         )
+        arm_targets_synced_to_host = not arm_targets_written_on_gpu or bool(
+            self._gpu_dls_solver is not None and self._gpu_dls_solver.last_result_was_synced
+        )
         assert self._joint_q_host is not None and self._joint_qd_host is not None
         assert self._target_joint_q_host is not None and self._target_joint_qd_host is not None
-        for target_index, value in zip(self._arm_joint_q_indices, result.q_cmd, strict=True):
-            self._target_joint_q_host[int(target_index)] = float(value)
-        if result.dq_cmd is not None:
-            for target_index, value in zip(self._arm_joint_qd_indices, result.dq_cmd, strict=True):
-                self._target_joint_qd_host[int(target_index)] = float(value)
+        if arm_targets_synced_to_host:
+            for target_index, value in zip(self._arm_joint_q_indices, result.q_cmd, strict=True):
+                self._target_joint_q_host[int(target_index)] = float(value)
+            if result.dq_cmd is not None:
+                for target_index, value in zip(self._arm_joint_qd_indices, result.dq_cmd, strict=True):
+                    self._target_joint_qd_host[int(target_index)] = float(value)
         if not arm_targets_written_on_gpu:
             self._target_joint_host_dirty = True
         if self.config.publish_mode == "state" and self._kinematics is not None:
@@ -1555,26 +1719,52 @@ class NewtonRuntimeRobotInterface(RobotInterface):
         joint_values = _expand_l10_mimic_joint_values(hand_target)
         assert self._joint_q_host is not None and self._joint_qd_host is not None
         assert self._target_joint_q_host is not None and self._target_joint_qd_host is not None
+        assert self._target_joint_q_wp is not None and self._target_joint_qd_wp is not None
+        self._ensure_hand_target_buffers(len(joint_values.joint_names))
+        assert self._hand_target_q_indices_host is not None
+        assert self._hand_target_qd_indices_host is not None
+        assert self._hand_target_values_host is not None
+        assert self._hand_target_q_indices_wp is not None
+        assert self._hand_target_qd_indices_wp is not None
+        assert self._hand_target_values_wp is not None
         max_step = max(0.0, float(self.config.hand_max_joint_step_rad))
+        count = 0
         for joint_name, value in zip(joint_values.joint_names, joint_values.joint_positions, strict=True):
             label_suffix = _l10_joint_label_suffix(self.config.arm_side, str(joint_name))
             q_index = self._joint_q_index_by_label.get(label_suffix)
             if q_index is None:
                 continue
-            current_value = float(self._joint_q_host[int(q_index)])
             target_value = float(value)
-            if max_step > 0.0:
-                target_value = float(np.clip(target_value, current_value - max_step, current_value + max_step))
-            self._target_joint_q_host[int(q_index)] = target_value
-            self._target_joint_host_dirty = True
             qd_index = self._joint_qd_index_by_label.get(label_suffix)
+            self._hand_target_q_indices_host[count] = int(q_index)
+            self._hand_target_qd_indices_host[count] = -1 if qd_index is None else int(qd_index)
+            self._hand_target_values_host[count] = target_value
+            self._target_joint_q_host[int(q_index)] = target_value
             if qd_index is not None:
-                if self.config.hand_publish_kinematic_velocity:
-                    hand_qd = (target_value - current_value) / float(self.example.frame_dt)
-                else:
-                    hand_qd = 0.0
-                self._target_joint_qd_host[int(qd_index)] = hand_qd
-                self._target_joint_host_dirty = True
+                self._target_joint_qd_host[int(qd_index)] = 0.0
+            count += 1
+        if count <= 0:
+            return
+        self._hand_target_q_indices_wp.assign(self._hand_target_q_indices_host)
+        self._hand_target_qd_indices_wp.assign(self._hand_target_qd_indices_host)
+        self._hand_target_values_wp.assign(self._hand_target_values_host)
+        wp.launch(
+            kernel=_write_hand_target_slices_kernel,
+            dim=count,
+            inputs=[
+                self.example.state_0.joint_q,
+                self._hand_target_q_indices_wp,
+                self._hand_target_qd_indices_wp,
+                self._hand_target_values_wp,
+                self._target_joint_q_wp,
+                self._target_joint_qd_wp,
+                int(count),
+                max_step,
+                max(1.0e-6, float(self.example.frame_dt)),
+                1 if self.config.hand_publish_kinematic_velocity else 0,
+            ],
+            device=self.example.model.device,
+        )
 
     def _publish_joint_state(self) -> None:
         assert self._target_joint_q_host is not None and self._target_joint_qd_host is not None
@@ -1694,23 +1884,64 @@ class NewtonRuntimeRobotInterface(RobotInterface):
         )
 
     def _sync_live_joint_state(self) -> None:
-        joint_q = self.example.state_0.joint_q.numpy().copy()
-        joint_qd = self.example.state_0.joint_qd.numpy().copy()
-        if not np.isfinite(joint_q).all() or not np.isfinite(joint_qd).all():
+        assert self._joint_q_host is not None and self._joint_qd_host is not None
+        if (
+            self._arm_joint_q_indices_wp is None
+            or self._arm_joint_qd_indices_wp is None
+            or self._arm_joint_q_live_wp is None
+            or self._arm_joint_qd_live_wp is None
+        ):
+            self._sync_full_joint_state_from_scene()
+            return
+
+        wp.launch(
+            kernel=_gather_arm_joint_state_kernel,
+            dim=7,
+            inputs=[
+                self.example.state_0.joint_q,
+                self.example.state_0.joint_qd,
+                self._arm_joint_q_indices_wp,
+                self._arm_joint_qd_indices_wp,
+                self._arm_joint_q_live_wp,
+                self._arm_joint_qd_live_wp,
+            ],
+            device=self.example.model.device,
+        )
+        self._arm_joint_q_live_host[:] = self._arm_joint_q_live_wp.numpy()
+        self._arm_joint_qd_live_host[:] = self._arm_joint_qd_live_wp.numpy()
+        if not np.isfinite(self._arm_joint_q_live_host).all() or not np.isfinite(self._arm_joint_qd_live_host).all():
             print("[newton-quest-teleop] warning: non-finite Newton joint state; resetting scene", flush=True)
             reset_scene = getattr(self.example, "reset_scene_to_initial", None)
             if callable(reset_scene):
                 reset_scene()
-                joint_q = self.example.state_0.joint_q.numpy().copy()
-                joint_qd = self.example.state_0.joint_qd.numpy().copy()
+                self._sync_full_joint_state_from_scene()
+                return
 
+        if not np.isfinite(self._arm_joint_q_live_host).all() or not np.isfinite(self._arm_joint_qd_live_host).all():
+            if self._target_joint_q_host is not None and np.isfinite(self._target_joint_q_host).all():
+                self._joint_q_host = self._target_joint_q_host.copy()
+                if self._target_joint_qd_host is not None:
+                    self._joint_qd_host = np.zeros_like(self._target_joint_qd_host)
+            else:
+                raise ValueError("Newton live joint state is non-finite and no finite target fallback is available")
+        else:
+            for slot, q_index in enumerate(self._arm_joint_q_indices):
+                self._joint_q_host[int(q_index)] = float(self._arm_joint_q_live_host[slot])
+            for slot, qd_index in enumerate(self._arm_joint_qd_indices):
+                self._joint_qd_host[int(qd_index)] = float(self._arm_joint_qd_live_host[slot])
+
+        if self._kinematics is not None:
+            self._kinematics.sync_joint_q(self._joint_q_host)
+
+    def _sync_full_joint_state_from_scene(self) -> None:
+        joint_q = self.example.state_0.joint_q.numpy().copy()
+        joint_qd = self.example.state_0.joint_qd.numpy().copy()
         if not np.isfinite(joint_q).all() or not np.isfinite(joint_qd).all():
             if self._target_joint_q_host is not None and np.isfinite(self._target_joint_q_host).all():
                 joint_q = self._target_joint_q_host.copy()
                 joint_qd = np.zeros_like(self._target_joint_qd_host) if self._target_joint_qd_host is not None else joint_qd
             else:
                 raise ValueError("Newton live joint state is non-finite and no finite target fallback is available")
-
         self._joint_q_host = joint_q
         self._joint_qd_host = joint_qd
         if self._kinematics is not None:
