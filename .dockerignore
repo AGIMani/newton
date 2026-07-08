@@ -1,0 +1,15 @@
+.git
+.claude
+.venv
+conda_envs
+conda_pkgs
+logs
+debug
+__pycache__
+*.py[cod]
+.pytest_cache
+.mypy_cache
+.ruff_cache
+.cache
+*.egg-info
+

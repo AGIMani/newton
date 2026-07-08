@@ -16,11 +16,11 @@ sudo modprobe v4l2loopback video_nr=44 card_label=teleop_sim_screen exclusive_ca
 ls -l /dev/video44
 ```
 
-## 2. 一条命令启动
+## 2. Docker 一条命令启动
 
 ```bash
-conda activate newton
-scripts/run_newton_vr_prereqs.sh --display :0
+cd ~/project/newton
+DISPLAY=:0 docker/run_vr_stack.sh
 ```
 
 启动成功后终端应看到：
@@ -32,6 +32,27 @@ OpenXR runtime found but no active Quest session yet; retrying...
 ```
 
 这表示主机已经在等待 Quest 连接。
+
+启动前可先做一次 Docker 预检查：
+
+```bash
+cd ~/project/newton
+DISPLAY=:0 docker/run_vr_stack.sh --check-only
+```
+
+正常应看到：
+
+```text
+[vr-prereqs] ok: preflight passed
+```
+
+Docker 启动脚本会把宿主机的 GPU、X11 display、`/dev/video44`、Docker socket、
+`~/.cloudxr`、Vosk 模型、CloudXR web cache、`IsaacTeleop` 和本项目目录挂进容器，
+并在容器内执行：
+
+```bash
+scripts/run_newton_vr_prereqs.sh --display :0
+```
 
 ## 3. Quest 连接
 
