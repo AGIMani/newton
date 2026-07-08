@@ -690,10 +690,14 @@ if [[ "${WITH_SCENE}" -eq 1 ]]; then
         --drive-hand-target-ke "${NEWTON_DRIVE_HAND_TARGET_KE:-80}"
         --drive-hand-target-kd "${NEWTON_DRIVE_HAND_TARGET_KD:-15}"
         --drive-hand-effort-limit "${NEWTON_DRIVE_HAND_EFFORT_LIMIT:-0.8}"
+        --l10-friction "${NEWTON_L10_FRICTION:-3.0}"
+        --l10-torsional-friction "${NEWTON_L10_TORSIONAL_FRICTION:-0.06}"
+        --l10-rolling-friction "${NEWTON_L10_ROLLING_FRICTION:-0.005}"
         --l10-bottle-contact-stop-activation "${NEWTON_L10_BOTTLE_CONTACT_STOP_ACTIVATION:-0.0015}"
         --l10-bottle-contact-stop-penetration "${NEWTON_L10_BOTTLE_CONTACT_STOP_PENETRATION:-0.00035}"
         --l10-bottle-contact-stop-release "${NEWTON_L10_BOTTLE_CONTACT_STOP_RELEASE:-0.00015}"
         --l10-bottle-contact-stop-retreat-rad "${NEWTON_L10_BOTTLE_CONTACT_STOP_RETREAT_RAD:-0.0015}"
+        --l10-bottle-contact-release-retreat-rad "${NEWTON_L10_BOTTLE_CONTACT_RELEASE_RETREAT_RAD:-0.02}"
     )
     if [[ "${NEWTON_TELEOP_HAND_PUBLISH_KINEMATIC_VELOCITY:-0}" == "1" ]]; then
         scene_contact_args+=(--teleop-hand-publish-kinematic-velocity)

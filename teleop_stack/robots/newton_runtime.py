@@ -67,6 +67,7 @@ class NewtonRuntimeRobotConfig:
     hand_publish_kinematic_velocity: bool = True
     hand_contact_stop_enabled: bool = True
     hand_contact_stop_retreat_rad: float = 0.01
+    hand_contact_release_retreat_rad: float = 0.0
     mapping: NeroTeleopMappingConfig = field(default_factory=NeroTeleopMappingConfig)
     ik_config_overrides: dict[str, object] = field(default_factory=dict)
 
@@ -756,7 +757,19 @@ class NewtonRuntimeRobotInterface(RobotInterface):
             return target_value
 
         closing_delta = (float(target_value) - float(current_value)) * closing_direction
-        if closing_delta <= 0.0:
+        if closing_delta < 0.0:
+            release_retreat = max(0.0, float(self.config.hand_contact_release_retreat_rad))
+            if release_retreat <= 0.0:
+                return target_value
+            target_value = min(
+                float(target_value) * closing_direction,
+                (float(current_value) - closing_direction * release_retreat) * closing_direction,
+            ) * closing_direction
+            limits = self._hand_joint_limits_by_joint.get(base_joint_name)
+            if limits is not None:
+                target_value = float(np.clip(target_value, limits[0], limits[1]))
+            return target_value
+        if closing_delta == 0.0:
             return target_value
 
         retreat = max(0.0, float(self.config.hand_contact_stop_retreat_rad))

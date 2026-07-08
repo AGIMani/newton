@@ -2250,6 +2250,7 @@ class Example:
                 hand_publish_kinematic_velocity=bool(args.teleop_hand_publish_kinematic_velocity),
                 hand_contact_stop_enabled=bool(args.l10_bottle_contact_stop),
                 hand_contact_stop_retreat_rad=float(args.l10_bottle_contact_stop_retreat_rad),
+                hand_contact_release_retreat_rad=float(args.l10_bottle_contact_release_retreat_rad),
                 mapping=mapping,
                 ik_config_overrides={
                     "max_task_step_m": float(args.teleop_ik_max_task_step_m),
@@ -3105,6 +3106,12 @@ class Example:
             type=float,
             default=L10_BOTTLE_CONTACT_STOP_RETREAT_RAD,
             help="Joint retreat [rad] applied when a blocked L10 finger command still tries to close.",
+        )
+        parser.add_argument(
+            "--l10-bottle-contact-release-retreat-rad",
+            type=float,
+            default=0.0,
+            help="Minimum opening retreat [rad] applied to contact-stopped L10 fingers while releasing the bottle.",
         )
         parser.add_argument(
             "--dynamic-bottle-friction",
