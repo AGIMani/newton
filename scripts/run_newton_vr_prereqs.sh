@@ -18,6 +18,7 @@ START_CLOUDXR=1
 START_WEB=1
 START_VOICE=1
 START_VR_OUTPUT="${NEWTON_START_VR_OUTPUT:-1}"
+VR_OUTPUT_MODE="${NEWTON_VR_OUTPUT_MODE:-legacy-v4l2}"
 CHECK_ONLY=0
 REEXEC_DOCKER_GROUP="${NEWTON_VR_PREREQS_REEXEC_DOCKER:-0}"
 ORIGINAL_ARGS=("$@")
@@ -52,7 +53,9 @@ Options:
   --skip-cloudxr         Do not start CloudXR runtime
   --skip-web             Do not start CloudXR web client
   --skip-voice           Do not start Quest voice bridge
-  --with-vr-output       Start VR sim-screen/XR output via camera_streamer (default)
+  --vr-output-mode MODE  VR output mode: direct-gpu, legacy-v4l2, or off
+                         (default: legacy-v4l2)
+  --with-vr-output       Start legacy-v4l2 VR sim-screen/XR output via camera_streamer
   --skip-vr-output       Do not start VR sim-screen/XR output
   --teleop-input-source overlay-log|quest
                          Quest hand input source (default: quest)
@@ -91,8 +94,15 @@ while [[ $# -gt 0 ]]; do
         --skip-cloudxr) START_CLOUDXR=0; shift ;;
         --skip-web) START_WEB=0; shift ;;
         --skip-voice) START_VOICE=0; shift ;;
-        --with-vr-output) START_VR_OUTPUT=1; shift ;;
-        --skip-vr-output) START_VR_OUTPUT=0; shift ;;
+        --vr-output-mode)
+            case "$2" in
+                direct-gpu|legacy-v4l2|off) VR_OUTPUT_MODE="$2" ;;
+                *) err "--vr-output-mode must be direct-gpu, legacy-v4l2, or off"; usage >&2; exit 2 ;;
+            esac
+            shift 2
+            ;;
+        --with-vr-output) START_VR_OUTPUT=1; VR_OUTPUT_MODE="legacy-v4l2"; shift ;;
+        --skip-vr-output) START_VR_OUTPUT=0; VR_OUTPUT_MODE="off"; shift ;;
         --teleop-input-source)
             case "$2" in
                 overlay-log|quest) TELEOP_INPUT_SOURCE="$2" ;;
@@ -117,6 +127,12 @@ while [[ $# -gt 0 ]]; do
         *) err "unknown argument: $1"; usage >&2; exit 2 ;;
     esac
 done
+
+case "${VR_OUTPUT_MODE}" in
+    direct-gpu|legacy-v4l2) START_VR_OUTPUT=1 ;;
+    off) START_VR_OUTPUT=0 ;;
+    *) err "--vr-output-mode must be direct-gpu, legacy-v4l2, or off"; exit 2 ;;
+esac
 
 cd "${REPO_ROOT}"
 mkdir -p "${LOG_DIR}"
@@ -255,7 +271,9 @@ else
     check_ok "capture display=${DISPLAY_ARG}"
 fi
 
-if [[ "${START_VR_OUTPUT}" -eq 1 ]]; then
+check_ok "vr output mode=${VR_OUTPUT_MODE}"
+
+if [[ "${START_VR_OUTPUT}" -eq 1 && "${VR_OUTPUT_MODE}" == "legacy-v4l2" ]]; then
     if command -v ffmpeg >/dev/null 2>&1; then
         check_ok "ffmpeg=$(command -v ffmpeg)"
     else
@@ -280,7 +298,7 @@ else
     check_error "missing docker"
 fi
 
-if [[ "${START_VR_OUTPUT}" -eq 1 ]]; then
+if [[ "${START_VR_OUTPUT}" -eq 1 && "${VR_OUTPUT_MODE}" == "legacy-v4l2" ]]; then
     if [[ -e /dev/video44 ]]; then
         check_ok "sim screen device=/dev/video44"
         if command -v v4l2-ctl >/dev/null 2>&1; then
@@ -304,6 +322,24 @@ if [[ "${START_VR_OUTPUT}" -eq 1 ]]; then
         check_error "sim screen device missing: /dev/video44"
         check_warn "create once with: sudo modprobe v4l2loopback video_nr=44 card_label=teleop_sim_screen exclusive_caps=1 max_buffers=2 max_width=1920 max_height=1080"
     fi
+elif [[ "${START_VR_OUTPUT}" -eq 1 && "${VR_OUTPUT_MODE}" == "direct-gpu" ]]; then
+    if [[ "${WITH_SCENE}" -ne 1 ]]; then
+        check_error "direct-gpu VR output is in-process and requires --with-scene"
+    fi
+    if [[ -n "${SCENE_PYTHON_BIN}" && -x "${SCENE_PYTHON_BIN}" ]]; then
+        direct_gpu_import_log="${LOG_DIR}/direct_gpu_import_check.log"
+        if PYTHONPATH="${REPO_ROOT}${PYTHONPATH:+:${PYTHONPATH}}" "${SCENE_PYTHON_BIN}" - <<'PY' >"${direct_gpu_import_log}" 2>&1
+from tools.newton_xr_direct_bridge import _load_direct_gpu_modules
+
+_load_direct_gpu_modules()
+PY
+        then
+            check_ok "direct-gpu runtime imports Holoscan/CuPy/XR renderer"
+        else
+            check_error "direct-gpu runtime imports failed; see ${direct_gpu_import_log}"
+            tail -40 "${direct_gpu_import_log}" >&2 || true
+        fi
+    fi
 else
     check_ok "sim-screen camera_streamer output disabled"
 fi
@@ -314,7 +350,7 @@ fi
 if [[ ! -x "${SCRIPT_DIR}/run_quest_voice_command_bridge.sh" ]]; then
     check_error "missing executable: scripts/run_quest_voice_command_bridge.sh"
 fi
-if [[ "${START_VR_OUTPUT}" -eq 1 && ! -x "${SCRIPT_DIR}/run_newton_vr_output.sh" ]]; then
+if [[ "${START_VR_OUTPUT}" -eq 1 && "${VR_OUTPUT_MODE}" == "legacy-v4l2" && ! -x "${SCRIPT_DIR}/run_newton_vr_output.sh" ]]; then
     check_error "missing executable: scripts/run_newton_vr_output.sh"
 fi
 if [[ "${WITH_SCENE}" -eq 1 && ! -f "${REPO_ROOT}/debug/import_dual_nero_linker_l10.py" ]]; then
@@ -581,7 +617,7 @@ fi
 ok "teleop input source=${TELEOP_INPUT_SOURCE}"
 
 if [[ "${WITH_SCENE}" -eq 1 ]]; then
-    if [[ "${START_VR_OUTPUT}" -eq 1 ]]; then
+    if [[ "${START_VR_OUTPUT}" -eq 1 && "${VR_OUTPUT_MODE}" == "legacy-v4l2" ]]; then
         vr_output_args=(
             --display "${DISPLAY_ARG}"
             --python "${TELEOP_PYTHON_BIN}"
@@ -598,6 +634,8 @@ if [[ "${WITH_SCENE}" -eq 1 ]]; then
             tail -80 "${LOG_DIR}/newton_vr_output.log" >&2 || true
             exit 1
         fi
+    elif [[ "${START_VR_OUTPUT}" -eq 1 && "${VR_OUTPUT_MODE}" == "direct-gpu" ]]; then
+        ok "direct-gpu VR output will run inside the Newton scene process"
     else
         warn "skipping camera_streamer VR output; sim-screen XR plane and overlay hand skeleton are disabled"
         if [[ "${TELEOP_INPUT_SOURCE}" == "overlay-log" ]]; then
@@ -609,6 +647,23 @@ if [[ "${WITH_SCENE}" -eq 1 ]]; then
     XR_HAND_LOG_PATH="${TELEOP_XR_HAND_LOG_PATH:-${REPO_ROOT}/logs/xr_debug/camera_overlay_hand.jsonl}"
     export TELEOP_XR_STATUS_PATH="${XR_STATUS_PATH}"
     export TELEOP_XR_HAND_LOG_PATH="${XR_HAND_LOG_PATH}"
+    scene_mode_args=()
+    if [[ "${VR_OUTPUT_MODE}" == "direct-gpu" ]]; then
+        scene_mode_args+=(
+            --direct-gpu-capture-fps "${NEWTON_DIRECT_GPU_CAPTURE_FPS:-20}"
+            --viewer-camera-source "${NEWTON_VIEWER_CAMERA_SOURCE:-d455}"
+            --no-d455-preview
+            --no-d405-preview
+            --no-d455-opencv-window
+            --no-d405-opencv-window
+        )
+        if [[ "${NEWTON_DIRECT_GPU_HEADLESS:-1}" == "0" ]]; then
+            scene_mode_args+=(--no-headless)
+            warn "direct-gpu visible viewer requested; NVIDIA EGL/CUDA interop may fall back to the slower X11 path"
+        else
+            scene_mode_args+=(--headless)
+        fi
+    fi
     log "starting Newton scene in foreground; press Ctrl+C here to stop the whole stack"
     scene_pythonpath="${PYTHONPATH:-}"
     if [[ -n "${SCENE_PYTHONPATH_DIR}" ]]; then
@@ -618,16 +673,21 @@ if [[ "${WITH_SCENE}" -eq 1 ]]; then
         --device "${SCENE_DEVICE}" \
         --quest-teleop \
         --teleop-input-source "${TELEOP_INPUT_SOURCE}" \
+        --vr-output-mode "${VR_OUTPUT_MODE}" \
         --teleop-overlay-hand-log-path "${XR_HAND_LOG_PATH}" \
         --teleop-startup-timeout-s "${TELEOP_STARTUP_TIMEOUT_S:-300}" \
         --teleop-xr-status-path "${XR_STATUS_PATH}" \
         --no-capture-graph \
         --no-viewer-contacts \
         --no-viewer-hydro-contact-surface \
+        "${scene_mode_args[@]}" \
         "${SCENE_ARGS[@]}"
-elif [[ "${START_VR_OUTPUT}" -eq 1 ]]; then
+elif [[ "${START_VR_OUTPUT}" -eq 1 && "${VR_OUTPUT_MODE}" == "legacy-v4l2" ]]; then
     log "starting VR output in foreground; press Ctrl+C here to stop the whole stack"
     "${SCRIPT_DIR}/run_newton_vr_output.sh" --display "${DISPLAY_ARG}" --python "${TELEOP_PYTHON_BIN}"
+elif [[ "${START_VR_OUTPUT}" -eq 1 && "${VR_OUTPUT_MODE}" == "direct-gpu" ]]; then
+    err "direct-gpu VR output is in-process and cannot run with --no-scene"
+    exit 2
 else
     warn "skipping VR output; background services are running, press Ctrl+C to stop"
     while true; do

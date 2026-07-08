@@ -1463,6 +1463,7 @@ class Example:
         self.d455_preview_enabled = args.d455_preview
         self.d405_preview_enabled = args.d405_preview
         self.d405_connector_rel_pos, self.d405_connector_rel_euler, self.d405_mount_source = _resolve_d405_mount_args(args)
+        self.d455_body_size = tuple(float(v) for v in _load_d455_config(args.d455_json)["body_size"])
         self.d405_body_size = tuple(float(v) for v in _load_d405_config(args.d405_json)["body_size"])
         self.d455_image_size = tuple(int(v) for v in args.d455_image_size)
         if args.d455_width is not None or args.d455_height is not None:
@@ -1489,6 +1490,7 @@ class Example:
         self.teleop_robot = None
         self.teleop_voice_policy = None
         self.teleop_xr_status_publisher = None
+        self.direct_gpu_xr_bridge = None
         self.teleop_mode = "ready"
         self.teleop_last_event = "session_created"
         self.teleop_exit_requested = False
@@ -1831,13 +1833,15 @@ class Example:
         _print_model_summary(self.model)
 
         self.viewer.set_model(self.model)
-        if hasattr(self.viewer, "set_camera"):
-            self.viewer.set_camera(pos=wp.vec3(1.8, -2.4, 1.2), pitch=-20.0, yaw=135.0)
+        self.setup_viewer_camera(args)
 
         self.setup_camera_previews(args)
 
         if args.quest_teleop:
             self.setup_quest_teleop(args)
+
+        if args.vr_output_mode == "direct-gpu":
+            self.setup_direct_gpu_xr(args)
 
         if self.simulate_enabled and args.capture_graph and not args.quest_teleop:
             self.capture()
@@ -2351,6 +2355,53 @@ class Example:
         self.teleop_robot = None
         session.__exit__(None, None, None)
 
+    def setup_direct_gpu_xr(self, args) -> None:
+        from tools.newton_xr_direct_bridge import (
+            NewtonXrBridge,
+            NewtonXrBridgeConfig,
+            NewtonXrBridgeUnavailable,
+        )
+
+        if not hasattr(self.viewer, "get_frame"):
+            raise RuntimeError("direct-gpu VR output requires the GL viewer with get_frame() support.")
+
+        renderer = getattr(self.viewer, "renderer", None)
+        window = getattr(renderer, "window", None)
+        if window is not None and hasattr(window, "set_size"):
+            window.set_size(int(args.direct_gpu_frame_width), int(args.direct_gpu_frame_height))
+
+        config = NewtonXrBridgeConfig(
+            width=int(args.direct_gpu_frame_width),
+            height=int(args.direct_gpu_frame_height),
+            backend=args.direct_gpu_xr_backend,
+            gpu=int(args.direct_gpu_xr_gpu),
+            plane_distance=float(args.direct_gpu_plane_distance),
+            plane_width=float(args.direct_gpu_plane_width),
+            plane_offset_x=float(args.direct_gpu_plane_offset_x),
+            plane_offset_y=float(args.direct_gpu_plane_offset_y),
+            lock_mode=args.direct_gpu_plane_lock_mode,
+            look_away_angle=float(args.direct_gpu_plane_look_away_angle),
+            reposition_distance=float(args.direct_gpu_plane_reposition_distance),
+            reposition_delay=float(args.direct_gpu_plane_reposition_delay),
+            transition_duration=float(args.direct_gpu_plane_transition_duration),
+            verbose=bool(args.direct_gpu_xr_verbose),
+            capture_fps=float(args.direct_gpu_capture_fps),
+        )
+        bridge = NewtonXrBridge(config)
+        try:
+            bridge.start()
+        except NewtonXrBridgeUnavailable:
+            raise
+        except Exception as exc:
+            raise RuntimeError(f"failed to start direct-gpu XR bridge: {exc}") from exc
+        self.direct_gpu_xr_bridge = bridge
+        atexit.register(self.close_direct_gpu_xr)
+
+    def close_direct_gpu_xr(self) -> None:
+        if self.direct_gpu_xr_bridge is not None:
+            self.direct_gpu_xr_bridge.stop()
+            self.direct_gpu_xr_bridge = None
+
     def render(self) -> None:
         self.render_camera_previews()
         self._log_l10_bottle_contacts()
@@ -2370,6 +2421,8 @@ class Example:
                 penetrating_only=True,
             )
         self.viewer.end_frame()
+        if self.direct_gpu_xr_bridge is not None:
+            self.direct_gpu_xr_bridge.capture_viewer(self.viewer)
 
     def setup_camera_previews(self, args) -> None:
         if not self.d455_preview_enabled and not self.d405_preview_enabled:
@@ -2540,7 +2593,7 @@ class Example:
         body_q = self.state_0.body_q.numpy()[body_index]
         return np.asarray(body_q[:3], dtype=np.float64), _rotation_from_quat_xyzw(np.asarray(body_q[3:7]))
 
-    def compute_d455_camera_transform(self) -> wp.transformf:
+    def _d455_camera_pose_vectors(self) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         d455_pos, d455_rotation = self._body_pose(D455_BODY_LABEL_SUFFIX)
         local_camera_pos = np.asarray(
             (float(self.d455_body_size[0]) * 0.5 + self.d455_front_clearance, 0.0, 0.0),
@@ -2549,11 +2602,39 @@ class Example:
         camera_pos = d455_pos + d455_rotation @ local_camera_pos
         camera_forward = d455_rotation @ np.asarray((1.0, 0.0, 0.0), dtype=np.float64)
         camera_up = d455_rotation @ np.asarray((0.0, 0.0, 1.0), dtype=np.float64)
+        return camera_pos, camera_forward, camera_up
+
+    def setup_viewer_camera(self, args) -> None:
+        if not hasattr(self.viewer, "set_camera"):
+            return
+
+        if args.viewer_camera_source == "d455":
+            camera_pos, camera_forward, _camera_up = self._d455_camera_pose_vectors()
+            if hasattr(self.viewer, "camera") and hasattr(self.viewer.camera, "fov"):
+                d455_config = _load_d455_config(args.d455_json)
+                self.viewer.camera.fov = float(args.d455_fov if args.d455_fov is not None else d455_config["rgb_fov"])
+            self.viewer.set_camera(pos=wp.vec3(*camera_pos), pitch=0.0, yaw=0.0)
+            if hasattr(self.viewer, "camera") and hasattr(self.viewer.camera, "look_at"):
+                self.viewer.camera.look_at(camera_pos + camera_forward)
+            print(
+                "[viewer-camera] source=d455 "
+                f"pos={np.round(camera_pos, 6).tolist()} "
+                f"forward={np.round(camera_forward, 6).tolist()}",
+                flush=True,
+            )
+            return
+
+        self.viewer.set_camera(
+            pos=wp.vec3(args.viewer_camera_x, args.viewer_camera_y, args.viewer_camera_z),
+            pitch=float(args.viewer_camera_pitch),
+            yaw=float(args.viewer_camera_yaw),
+        )
+
+    def compute_d455_camera_transform(self) -> wp.transformf:
+        camera_pos, camera_forward, camera_up = self._d455_camera_pose_vectors()
         if not self._d455_pose_logged:
             print(
                 "[d455-preview] camera pose from URDF "
-                f"body_pos={np.round(d455_pos, 6).tolist()} "
-                f"local_pos={np.round(local_camera_pos, 6).tolist()} "
                 f"camera_pos={np.round(camera_pos, 6).tolist()} "
                 f"forward={np.round(camera_forward, 6).tolist()} "
                 f"up={np.round(camera_up, 6).tolist()}",
@@ -2592,6 +2673,7 @@ class Example:
     def test_final(self) -> None:
         _assert_finite_state(self.state_0, "Simulation")
         self.close_l10_bottle_contact_log()
+        self.close_direct_gpu_xr()
         self.close_quest_teleop()
 
     @staticmethod
@@ -3089,6 +3171,42 @@ class Example:
         parser.add_argument("--bottle-pitch", type=float, default=0.0, help="Dynamic bottle pitch in scene frame [deg].")
         parser.add_argument("--bottle-yaw", type=float, default=0.0, help="Dynamic bottle yaw in scene frame [deg].")
         parser.add_argument(
+            "--viewer-camera-source",
+            choices=("manual", "d455"),
+            default=os.environ.get("NEWTON_VIEWER_CAMERA_SOURCE", "manual"),
+            help="Initial Newton viewer camera source. d455 matches the D455 ego camera pose.",
+        )
+        parser.add_argument(
+            "--viewer-camera-x",
+            type=float,
+            default=float(os.environ.get("NEWTON_VIEWER_CAMERA_X", "1.8")),
+            help="Initial Newton viewer camera X position [m].",
+        )
+        parser.add_argument(
+            "--viewer-camera-y",
+            type=float,
+            default=float(os.environ.get("NEWTON_VIEWER_CAMERA_Y", "-2.4")),
+            help="Initial Newton viewer camera Y position [m].",
+        )
+        parser.add_argument(
+            "--viewer-camera-z",
+            type=float,
+            default=float(os.environ.get("NEWTON_VIEWER_CAMERA_Z", "1.2")),
+            help="Initial Newton viewer camera Z position [m].",
+        )
+        parser.add_argument(
+            "--viewer-camera-pitch",
+            type=float,
+            default=float(os.environ.get("NEWTON_VIEWER_CAMERA_PITCH", "-20.0")),
+            help="Initial Newton viewer camera pitch [deg].",
+        )
+        parser.add_argument(
+            "--viewer-camera-yaw",
+            type=float,
+            default=float(os.environ.get("NEWTON_VIEWER_CAMERA_YAW", "135.0")),
+            help="Initial Newton viewer camera yaw [deg].",
+        )
+        parser.add_argument(
             "--quest-teleop",
             action=argparse.BooleanOptionalAction,
             default=False,
@@ -3111,6 +3229,102 @@ class Example:
             type=float,
             default=1.0,
             help="Ignore overlay hand samples older than this many seconds.",
+        )
+        parser.add_argument(
+            "--vr-output-mode",
+            choices=("off", "legacy-v4l2", "direct-gpu"),
+            default=os.environ.get("NEWTON_VR_OUTPUT_MODE", "off"),
+            help="Quest sim-screen/XR output mode. direct-gpu runs the XR plane renderer in this process.",
+        )
+        parser.add_argument(
+            "--direct-gpu-frame-width",
+            type=int,
+            default=int(os.environ.get("NEWTON_DIRECT_GPU_FRAME_WIDTH", "1280")),
+            help="Fixed direct-gpu XR frame width [px].",
+        )
+        parser.add_argument(
+            "--direct-gpu-frame-height",
+            type=int,
+            default=int(os.environ.get("NEWTON_DIRECT_GPU_FRAME_HEIGHT", "720")),
+            help="Fixed direct-gpu XR frame height [px].",
+        )
+        parser.add_argument(
+            "--direct-gpu-xr-backend",
+            choices=("auto", "external-texture", "pbo-cuda"),
+            default=os.environ.get("NEWTON_DIRECT_GPU_XR_BACKEND", "auto"),
+            help="Direct-gpu XR frame transfer backend.",
+        )
+        parser.add_argument(
+            "--direct-gpu-xr-gpu",
+            type=int,
+            default=int(os.environ.get("NEWTON_VR_GPU", "0")),
+            help="Physical GPU selected for the direct-gpu XR loop.",
+        )
+        parser.add_argument(
+            "--direct-gpu-xr-verbose",
+            action=argparse.BooleanOptionalAction,
+            default=os.environ.get("NEWTON_DIRECT_GPU_XR_VERBOSE", "0").lower() in ("1", "true", "yes", "on"),
+            help="Print direct-gpu XR bridge frame counters.",
+        )
+        parser.add_argument(
+            "--direct-gpu-capture-fps",
+            type=float,
+            default=float(os.environ.get("NEWTON_DIRECT_GPU_CAPTURE_FPS", "20")),
+            help="Maximum viewer capture rate for direct-gpu XR output [Hz]. Set <=0 to capture every render frame.",
+        )
+        parser.add_argument(
+            "--direct-gpu-plane-distance",
+            type=float,
+            default=float(os.environ.get("NEWTON_DIRECT_GPU_PLANE_DISTANCE", "1.4")),
+            help="Direct-gpu XR plane distance [m].",
+        )
+        parser.add_argument(
+            "--direct-gpu-plane-width",
+            type=float,
+            default=float(os.environ.get("NEWTON_DIRECT_GPU_PLANE_WIDTH", "1.35")),
+            help="Direct-gpu XR plane width [m].",
+        )
+        parser.add_argument(
+            "--direct-gpu-plane-offset-x",
+            type=float,
+            default=float(os.environ.get("NEWTON_DIRECT_GPU_PLANE_OFFSET_X", "0.0")),
+            help="Direct-gpu XR plane horizontal offset [m].",
+        )
+        parser.add_argument(
+            "--direct-gpu-plane-offset-y",
+            type=float,
+            default=float(os.environ.get("NEWTON_DIRECT_GPU_PLANE_OFFSET_Y", "0.0")),
+            help="Direct-gpu XR plane vertical offset [m].",
+        )
+        parser.add_argument(
+            "--direct-gpu-plane-lock-mode",
+            type=str,
+            default=os.environ.get("NEWTON_DIRECT_GPU_PLANE_LOCK_MODE", "head"),
+            help="Direct-gpu XR plane lock mode passed to XrPlaneRendererOp.",
+        )
+        parser.add_argument(
+            "--direct-gpu-plane-look-away-angle",
+            type=float,
+            default=float(os.environ.get("NEWTON_DIRECT_GPU_PLANE_LOOK_AWAY_ANGLE", "55.0")),
+            help="Direct-gpu XR plane look-away angle [deg].",
+        )
+        parser.add_argument(
+            "--direct-gpu-plane-reposition-distance",
+            type=float,
+            default=float(os.environ.get("NEWTON_DIRECT_GPU_PLANE_REPOSITION_DISTANCE", "0.35")),
+            help="Direct-gpu XR plane reposition distance [m].",
+        )
+        parser.add_argument(
+            "--direct-gpu-plane-reposition-delay",
+            type=float,
+            default=float(os.environ.get("NEWTON_DIRECT_GPU_PLANE_REPOSITION_DELAY", "0.5")),
+            help="Direct-gpu XR plane reposition delay [s].",
+        )
+        parser.add_argument(
+            "--direct-gpu-plane-transition-duration",
+            type=float,
+            default=float(os.environ.get("NEWTON_DIRECT_GPU_PLANE_TRANSITION_DURATION", "0.25")),
+            help="Direct-gpu XR plane transition duration [s].",
         )
         parser.add_argument(
             "--teleop-app-name",

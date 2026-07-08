@@ -1,9 +1,11 @@
 # Newton Quest Teleop 启动流程
 
-## 1. 可选：准备 sim-screen 视频设备
+## 1. 可选：准备 legacy sim-screen 视频设备
 
-默认 Docker 启动会保留 Quest 里的 sim-screen XR plane / 手骨架 overlay，所以需要
-`/dev/video44`。遥操输入仍然直接来自 Quest/OpenXR，不从 overlay JSONL 读手部样本。
+`legacy-v4l2` 模式会保留 Quest 里的 sim-screen XR plane / 手骨架 overlay，并通过
+`/dev/video44` 传视频。遥操输入仍然直接来自 Quest/OpenXR，不从 overlay JSONL 读手部样本。
+
+`direct-gpu` 模式不需要 `/dev/video44`、`ffmpeg` 或 `camera_streamer` 容器。
 
 ```bash
 sudo modprobe -r v4l2loopback
@@ -24,10 +26,52 @@ scripts/run_newton_vr_prereqs_object.sh --display :0
 
 ## 2. Docker 一条命令启动
 
+### 推荐：单卡 direct-gpu
+
+第一次先构建 direct-gpu 镜像。它从 `harness-camera-streamer-lite:latest` 继承
+Holoscan / XR renderer，再把 Newton 环境装进去：
+
+```bash
+cd ~/project/newton
+docker/build_direct_gpu.sh
+```
+
+启动时显式选择 direct-gpu，并把 Newton、ViewerGL、XR renderer、CloudXR 约束到同一张物理 GPU。
+node3 默认用物理 GPU0：
+
 ```bash
 cd ~/project/newton
 newgrp docker
-DISPLAY=:0 docker/run_vr_stack.sh
+NEWTON_VR_GPU=0 DISPLAY=:0 docker/run_vr_stack.sh --vr-output-mode direct-gpu
+```
+
+direct-gpu 默认把 Newton viewer 初始视角对齐到 D455 ego 相机位姿，并继续使用
+NVIDIA EGL headless 渲染以保持 CUDA/GL interop。如果要临时改回手动相机参数：
+
+```bash
+NEWTON_VIEWER_CAMERA_SOURCE=manual \
+NEWTON_VIEWER_CAMERA_X=1.8 \
+NEWTON_VIEWER_CAMERA_Y=-2.4 \
+NEWTON_VIEWER_CAMERA_Z=1.2 \
+NEWTON_VIEWER_CAMERA_PITCH=-20 \
+NEWTON_VIEWER_CAMERA_YAW=135 \
+NEWTON_VR_GPU=0 DISPLAY=:0 docker/run_vr_stack.sh --vr-output-mode direct-gpu
+```
+
+direct-gpu 启动后不应再看到这些进程：
+
+```bash
+pgrep -af 'ffmpeg|v4l2loopback|newton-camera-streamer-lite|run_newton_vr_output' || true
+```
+
+如果 direct-gpu 缺 Holoscan、CuPy 或 `xr_plane_renderer`，预检会直接报错；不会静默退回旧链路。
+
+### 回退：legacy-v4l2
+
+```bash
+cd ~/project/newton
+newgrp docker
+DISPLAY=:0 docker/run_vr_stack.sh --vr-output-mode legacy-v4l2
 ```
 
 这条默认会启动 sim-screen XR plane / 手骨架 overlay，同时 Newton 直接从 Quest/OpenXR
@@ -42,7 +86,7 @@ NEWTON_VR_CAPTURE_FPS=15 DISPLAY=:0 docker/run_vr_stack.sh
 # 指定 VR 屏幕捕获尺寸，默认会自动夹到实际 X11 display 尺寸
 NEWTON_VR_CAPTURE_SIZE=1024x768 DISPLAY=:0 docker/run_vr_stack.sh
 
-# 双 GPU 机器上可试：把 camera_streamer 容器限制到 GPU1，Newton scene 继续用 cuda:0
+# 仅 legacy 调试时可试：把 camera_streamer 容器限制到 GPU1，Newton scene 继续用 cuda:0
 NEWTON_CAMERA_STREAMER_VISIBLE_DEVICES=1 DISPLAY=:0 docker/run_vr_stack.sh
 ```
 

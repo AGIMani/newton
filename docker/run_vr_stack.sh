@@ -12,7 +12,10 @@ RUN_HOME="${RUN_HOME:-${HOME}}"
 RUN_UID="$(id -u "${RUN_USER}" 2>/dev/null || printf '%s' "$(id -u)")"
 HOST_HOME="${HOST_HOME:-${RUN_HOME}}"
 CONTAINER_HOME="${CONTAINER_HOME:-${HOST_HOME}}"
+IMAGE_NAME_PROVIDED="${IMAGE_NAME+x}"
 IMAGE_NAME="${IMAGE_NAME:-newton:latest}"
+VR_OUTPUT_MODE="${NEWTON_VR_OUTPUT_MODE:-legacy-v4l2}"
+NEWTON_VR_GPU="${NEWTON_VR_GPU:-0}"
 DISPLAY_ARG="${DISPLAY:-:0}"
 MODEL_PATH="${MODEL_PATH:-${CONTAINER_HOME}/.cache/teleop_stack/vosk/vosk-model-small-cn-0.22}"
 ISAAC_TELEOP_ROOT="${ISAAC_TELEOP_ROOT:-${PROJECT_DIR}/IsaacTeleop}"
@@ -20,6 +23,46 @@ IMPORTED_WEBXR_DIR="${IMPORTED_WEBXR_DIR:-${CONTAINER_HOME}/.cache/teleop_stack/
 CAMERA_STREAMER_LITE_IMAGE="${NEWTON_CAMERA_STREAMER_LITE_IMAGE:-harness-camera-streamer-lite:latest}"
 CLOUDXR_NATIVE_DIR="${NEWTON_CLOUDXR_NATIVE_DIR:-${REPO_DIR}/docker/cloudxr-native-6.1}"
 CLOUDXR_NATIVE_CONTAINER_DIR="${NEWTON_CLOUDXR_NATIVE_CONTAINER_DIR:-/workspace/newton/.venv/lib/python3.12/site-packages/isaacteleop/cloudxr/native}"
+
+parse_vr_output_mode() {
+    local idx=0
+    local arg
+    local mode="${VR_OUTPUT_MODE}"
+    while (( idx < ${#ORIGINAL_ARGS[@]} )); do
+        arg="${ORIGINAL_ARGS[$idx]}"
+        case "${arg}" in
+            --)
+                break
+                ;;
+            --vr-output-mode)
+                idx=$((idx + 1))
+                if (( idx < ${#ORIGINAL_ARGS[@]} )); then
+                    mode="${ORIGINAL_ARGS[$idx]}"
+                fi
+                ;;
+            --vr-output-mode=*)
+                mode="${arg#--vr-output-mode=}"
+                ;;
+            --skip-vr-output)
+                mode="off"
+                ;;
+            --with-vr-output)
+                mode="legacy-v4l2"
+                ;;
+        esac
+        idx=$((idx + 1))
+    done
+    printf '%s\n' "${mode}"
+}
+
+VR_OUTPUT_MODE="$(parse_vr_output_mode)"
+case "${VR_OUTPUT_MODE}" in
+    direct-gpu|legacy-v4l2|off) ;;
+    *) printf '[vr-docker] invalid --vr-output-mode: %s\n' "${VR_OUTPUT_MODE}" >&2; exit 2 ;;
+esac
+if [[ "${VR_OUTPUT_MODE}" == "direct-gpu" && -z "${IMAGE_NAME_PROVIDED}" ]]; then
+    IMAGE_NAME="${NEWTON_DIRECT_GPU_IMAGE:-newton-direct-gpu:latest}"
+fi
 
 shell_quote() {
     printf '%q' "$1"
@@ -100,7 +143,29 @@ ensure_sim_screen_device() {
     fi
 }
 
-ensure_sim_screen_device
+if [[ "${VR_OUTPUT_MODE}" == "legacy-v4l2" ]]; then
+    ensure_sim_screen_device
+fi
+
+NVIDIA_VISIBLE_DEVICES_ARG="${NVIDIA_VISIBLE_DEVICES:-all}"
+CUDA_VISIBLE_DEVICES_ARG="${CUDA_VISIBLE_DEVICES:-}"
+CONTAINER_PYTHONPATH="${REPO_DIR}"
+if [[ "${VR_OUTPUT_MODE}" == "direct-gpu" ]]; then
+    NVIDIA_VISIBLE_DEVICES_ARG="${NVIDIA_VISIBLE_DEVICES:-all}"
+    CUDA_VISIBLE_DEVICES_ARG="${CUDA_VISIBLE_DEVICES:-${NEWTON_VR_GPU}}"
+    CONTAINER_PYTHONPATH="${REPO_DIR}:/workspace/newton:/camera_streamer:/camera_streamer/build:/camera_streamer/python:/camera_streamer/python/lib:/camera_streamer/build/python:/camera_streamer/build/python/lib:/opt/nvidia/holoscan/python/lib"
+    PYOPENGL_PLATFORM_ARG="${PYOPENGL_PLATFORM:-egl}"
+    EGL_VENDOR_LIBRARY_FILENAMES_ARG="${__EGL_VENDOR_LIBRARY_FILENAMES:-/usr/share/glvnd/egl_vendor.d/10_nvidia.json}"
+    if [[ -n "${PYGLET_HEADLESS_DEVICE:-}" ]]; then
+        PYGLET_HEADLESS_DEVICE_ARG="${PYGLET_HEADLESS_DEVICE}"
+    elif [[ "${NEWTON_VR_GPU}" == "0" ]]; then
+        PYGLET_HEADLESS_DEVICE_ARG="1"
+    elif [[ "${NEWTON_VR_GPU}" == "1" ]]; then
+        PYGLET_HEADLESS_DEVICE_ARG="0"
+    else
+        PYGLET_HEADLESS_DEVICE_ARG="0"
+    fi
+fi
 
 if command -v xhost >/dev/null 2>&1; then
     if [[ -n "${HOST_XAUTHORITY}" ]]; then
@@ -119,11 +184,12 @@ docker_args=(
     --privileged
     --network=host
     --ipc=host
+    --ulimit stack=33554432
     -e "DISPLAY=${DISPLAY_ARG}"
     -e "HOME=${CONTAINER_HOME}"
     -e "USER=${RUN_USER}"
     -e "REPO_DIR=${REPO_DIR}"
-    -e "PYTHONPATH=${REPO_DIR}"
+    -e "PYTHONPATH=${CONTAINER_PYTHONPATH}"
     -e "PYTHON_BIN=/workspace/newton/.venv/bin/python"
     -e "SCENE_PYTHON_BIN=/workspace/newton/.venv/bin/python"
     -e "TELEOP_PYTHON_BIN=/workspace/newton/.venv/bin/python"
@@ -132,9 +198,11 @@ docker_args=(
     -e "IMPORTED_IMAGE=cloudxr-web-app:latest"
     -e "IMPORTED_WEBXR_DIR=${IMPORTED_WEBXR_DIR}"
     -e "NEWTON_CAMERA_STREAMER_LITE_IMAGE=${CAMERA_STREAMER_LITE_IMAGE}"
+    -e "NEWTON_VR_OUTPUT_MODE=${VR_OUTPUT_MODE}"
+    -e "NEWTON_VR_GPU=${NEWTON_VR_GPU}"
     -e "NV_DEVICE_PROFILE=${NV_DEVICE_PROFILE:-Quest3}"
     -e "NV_CXR_ENABLE_PUSH_DEVICES=${NV_CXR_ENABLE_PUSH_DEVICES:-0}"
-    -e "NVIDIA_VISIBLE_DEVICES=${NVIDIA_VISIBLE_DEVICES:-all}"
+    -e "NVIDIA_VISIBLE_DEVICES=${NVIDIA_VISIBLE_DEVICES_ARG}"
     -e "NVIDIA_DRIVER_CAPABILITIES=${NVIDIA_DRIVER_CAPABILITIES:-graphics,video,compute,utility,display}"
     -e "VK_ICD_FILENAMES=${VK_ICD_FILENAMES:-/etc/vulkan/icd.d/nvidia_icd.json}"
     -v "${PROJECT_DIR}:${PROJECT_DIR}:rw"
@@ -145,6 +213,17 @@ docker_args=(
     -v /run/udev:/run/udev:rw
     -v /var/run/docker.sock:/var/run/docker.sock
 )
+
+if [[ -n "${CUDA_VISIBLE_DEVICES_ARG}" ]]; then
+    docker_args+=(-e "CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES_ARG}")
+fi
+if [[ "${VR_OUTPUT_MODE}" == "direct-gpu" ]]; then
+    docker_args+=(
+        -e "PYOPENGL_PLATFORM=${PYOPENGL_PLATFORM_ARG}"
+        -e "__EGL_VENDOR_LIBRARY_FILENAMES=${EGL_VENDOR_LIBRARY_FILENAMES_ARG}"
+        -e "PYGLET_HEADLESS_DEVICE=${PYGLET_HEADLESS_DEVICE_ARG}"
+    )
+fi
 
 if [[ -x /usr/bin/docker ]]; then
     docker_args+=(-v /usr/bin/docker:/usr/bin/docker:ro)

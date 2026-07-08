@@ -1018,6 +1018,10 @@ class RendererGL:
         try:
             import pyglet
 
+            if headless:
+                pyglet.options["headless"] = True
+                pyglet.options["headless_device"] = int(os.environ.get("PYGLET_HEADLESS_DEVICE", "0"))
+
             # disable error checking for performance
             pyglet.options["debug_gl"] = False
 
