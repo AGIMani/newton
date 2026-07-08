@@ -48,7 +48,7 @@ class NewtonXrBridgeConfig:
     transition_duration: float = 0.25
     verbose: bool = False
     scheduler_threads: int = 3
-    capture_fps: float = 20.0
+    capture_fps: float = 60.0
     flip_x: bool = False
 
 

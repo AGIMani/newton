@@ -654,7 +654,7 @@ if [[ "${WITH_SCENE}" -eq 1 ]]; then
     scene_mode_args=()
     if [[ "${VR_OUTPUT_MODE}" == "direct-gpu" ]]; then
         scene_mode_args+=(
-            --direct-gpu-capture-fps "${NEWTON_DIRECT_GPU_CAPTURE_FPS:-20}"
+            --direct-gpu-capture-fps "${NEWTON_DIRECT_GPU_CAPTURE_FPS:-60}"
             --viewer-camera-source "${NEWTON_VIEWER_CAMERA_SOURCE:-d455}"
             --no-d455-preview
             --no-d405-preview
@@ -673,6 +673,19 @@ if [[ "${WITH_SCENE}" -eq 1 ]]; then
             scene_mode_args+=(--headless)
         fi
     fi
+    scene_perf_args=()
+    if [[ -n "${NEWTON_SCENE_FPS:-}" ]]; then
+        scene_perf_args+=(--fps "${NEWTON_SCENE_FPS}")
+    fi
+    if [[ -n "${NEWTON_SCENE_SUBSTEPS:-}" ]]; then
+        scene_perf_args+=(--substeps "${NEWTON_SCENE_SUBSTEPS}")
+    fi
+    if [[ -n "${NEWTON_SOLVER_ITERATIONS:-}" ]]; then
+        scene_perf_args+=(--solver-iterations "${NEWTON_SOLVER_ITERATIONS}")
+    fi
+    if [[ -n "${NEWTON_TELEOP_LOOP_HZ:-}" ]]; then
+        scene_perf_args+=(--teleop-loop-hz "${NEWTON_TELEOP_LOOP_HZ}")
+    fi
     log "starting Newton scene in foreground; press Ctrl+C here to stop the whole stack"
     scene_pythonpath="${PYTHONPATH:-}"
     if [[ -n "${SCENE_PYTHONPATH_DIR}" ]]; then
@@ -690,6 +703,7 @@ if [[ "${WITH_SCENE}" -eq 1 ]]; then
         --no-viewer-contacts \
         --no-viewer-hydro-contact-surface \
         "${scene_mode_args[@]}" \
+        "${scene_perf_args[@]}" \
         "${SCENE_ARGS[@]}"
 elif [[ "${START_VR_OUTPUT}" -eq 1 && "${VR_OUTPUT_MODE}" == "legacy-v4l2" ]]; then
     log "starting VR output in foreground; press Ctrl+C here to stop the whole stack"

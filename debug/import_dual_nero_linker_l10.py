@@ -3270,7 +3270,7 @@ class Example:
         parser.add_argument(
             "--direct-gpu-capture-fps",
             type=float,
-            default=float(os.environ.get("NEWTON_DIRECT_GPU_CAPTURE_FPS", "20")),
+            default=float(os.environ.get("NEWTON_DIRECT_GPU_CAPTURE_FPS", "60")),
             help="Maximum viewer capture rate for direct-gpu XR output [Hz]. Set <=0 to capture every render frame.",
         )
         parser.add_argument(
