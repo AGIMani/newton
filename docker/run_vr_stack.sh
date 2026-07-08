@@ -82,9 +82,25 @@ if [[ -n "${DISPLAY_SOCKET}" && ! -S "${DISPLAY_SOCKET}" ]]; then
     fi
 fi
 
-if [[ ! -e /dev/video44 ]]; then
-    sudo modprobe v4l2loopback video_nr=44 card_label=teleop_sim_screen exclusive_caps=1 max_buffers=2 max_width=1920 max_height=1080
-fi
+ensure_sim_screen_device() {
+    local device="/dev/video44"
+    local needs_reload=0
+
+    if [[ ! -e "${device}" ]]; then
+        needs_reload=1
+    elif command -v v4l2-ctl >/dev/null 2>&1; then
+        if ! v4l2-ctl -d "${device}" --get-fmt-video-out >/dev/null 2>&1; then
+            needs_reload=1
+        fi
+    fi
+
+    if [[ "${needs_reload}" -eq 1 ]]; then
+        sudo modprobe -r v4l2loopback >/dev/null 2>&1 || true
+        sudo modprobe v4l2loopback video_nr=44 card_label=teleop_sim_screen exclusive_caps=1 max_buffers=2 max_width=1920 max_height=1080
+    fi
+}
+
+ensure_sim_screen_device
 
 if command -v xhost >/dev/null 2>&1; then
     if [[ -n "${HOST_XAUTHORITY}" ]]; then
@@ -116,6 +132,8 @@ docker_args=(
     -e "IMPORTED_IMAGE=cloudxr-web-app:latest"
     -e "IMPORTED_WEBXR_DIR=${IMPORTED_WEBXR_DIR}"
     -e "NEWTON_CAMERA_STREAMER_LITE_IMAGE=${CAMERA_STREAMER_LITE_IMAGE}"
+    -e "NV_DEVICE_PROFILE=${NV_DEVICE_PROFILE:-Quest3}"
+    -e "NV_CXR_ENABLE_PUSH_DEVICES=${NV_CXR_ENABLE_PUSH_DEVICES:-0}"
     -e "NVIDIA_VISIBLE_DEVICES=${NVIDIA_VISIBLE_DEVICES:-all}"
     -e "NVIDIA_DRIVER_CAPABILITIES=${NVIDIA_DRIVER_CAPABILITIES:-graphics,video,compute,utility,display}"
     -e "VK_ICD_FILENAMES=${VK_ICD_FILENAMES:-/etc/vulkan/icd.d/nvidia_icd.json}"

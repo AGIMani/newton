@@ -6,8 +6,10 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DEVICE="/dev/video44"
 CAPTURE_DISPLAY="${DISPLAY:-}"
 CAPTURE_OFFSET="0,0"
-CAPTURE_SIZE="1280x720"
-CAPTURE_FPS="20"
+CAPTURE_SIZE="${NEWTON_VR_CAPTURE_SIZE:-1280x720}"
+CAPTURE_FPS="${NEWTON_VR_CAPTURE_FPS:-20}"
+CAPTURE_DRAW_MOUSE="${NEWTON_VR_CAPTURE_DRAW_MOUSE:-0}"
+CAMERA_CUDA_DEVICE="${NEWTON_VR_CAMERA_CUDA_DEVICE:-0}"
 PLANE_DISTANCE="1.6"
 PLANE_WIDTH="1.2"
 PLANE_OFFSET_X="0.0"
@@ -27,6 +29,7 @@ fi
 CAMERA_STREAMER_CONTAINER_NAME="${NEWTON_CAMERA_STREAMER_CONTAINER_NAME:-newton-camera-streamer-lite}"
 XR_HAND_LOG_PATH="${TELEOP_XR_HAND_LOG_PATH:-$REPO_ROOT/logs/xr_debug/camera_overlay_hand.jsonl}"
 XR_HAND_LOG_STRIDE="${TELEOP_XR_HAND_LOG_STRIDE:-10}"
+ENABLE_HAND_LOG="${NEWTON_ENABLE_XR_HAND_LOG:-1}"
 XR_STATUS_PATH="${TELEOP_XR_STATUS_PATH:-}"
 XR_RECOVERY_MAX_RETRIES="${TELEOP_CAMERA_XR_RECOVERY_MAX_RETRIES:-3600}"
 XR_RECOVERY_DELAY_S="${TELEOP_CAMERA_XR_RECOVERY_DELAY_S:-2.0}"
@@ -48,6 +51,8 @@ Options:
   --offset X,Y                X11 capture offset (default: 0,0)
   --size WIDTHxHEIGHT         Capture size (default: 1280x720)
   --fps FPS                   ffmpeg capture FPS (default: 20)
+  --draw-mouse 0|1            Include X11 cursor in sim-screen capture (default: 0)
+  --camera-cuda-device N      CUDA device ordinal inside the camera_streamer container (default: 0)
   --plane-distance M          XR plane distance in meters (default: 1.6)
   --plane-width M             XR plane width in meters (default: 1.2)
   --plane-offset-x M          XR plane horizontal offset (default: 0.0)
@@ -62,6 +67,8 @@ Options:
                               (default: existing harness-camera-streamer-lite, else newton-camera-streamer-lite)
   --hand-log-path PATH        XR hand joint log path (default: logs/xr_debug/camera_overlay_hand.jsonl)
   --hand-log-stride N         Log every N rendered frames (default: 10)
+  --disable-hand-log          Draw hand overlay without writing XR hand JSONL
+  --enable-hand-log           Write XR hand JSONL for overlay-log teleop/debugging
   --xr-status-path PATH       Teleop status JSON path shown in VR
                               (default: $NV_CXR_RUNTIME_DIR/teleop_xr_status.json)
   --xr-recovery-max-retries N Number of XR-session retries before giving up
@@ -86,6 +93,8 @@ while [[ $# -gt 0 ]]; do
         --offset) CAPTURE_OFFSET="$2"; shift 2 ;;
         --size) CAPTURE_SIZE="$2"; shift 2 ;;
         --fps) CAPTURE_FPS="$2"; shift 2 ;;
+        --draw-mouse) CAPTURE_DRAW_MOUSE="$2"; shift 2 ;;
+        --camera-cuda-device) CAMERA_CUDA_DEVICE="$2"; shift 2 ;;
         --plane-distance) PLANE_DISTANCE="$2"; shift 2 ;;
         --plane-width) PLANE_WIDTH="$2"; shift 2 ;;
         --plane-offset-x) PLANE_OFFSET_X="$2"; shift 2 ;;
@@ -97,6 +106,8 @@ while [[ $# -gt 0 ]]; do
         --lite-image) CAMERA_STREAMER_LITE_IMAGE="$2"; shift 2 ;;
         --hand-log-path) XR_HAND_LOG_PATH="$2"; shift 2 ;;
         --hand-log-stride) XR_HAND_LOG_STRIDE="$2"; shift 2 ;;
+        --disable-hand-log) ENABLE_HAND_LOG=0; shift ;;
+        --enable-hand-log) ENABLE_HAND_LOG=1; shift ;;
         --xr-status-path) XR_STATUS_PATH="$2"; shift 2 ;;
         --xr-recovery-max-retries) XR_RECOVERY_MAX_RETRIES="$2"; shift 2 ;;
         --xr-recovery-delay-s) XR_RECOVERY_DELAY_S="$2"; shift 2 ;;
@@ -315,7 +326,8 @@ CONFIG_PATH="$("$PYTHON_BIN" "$REPO_ROOT/tools/generate_camera_streamer_sim_conf
     --device "$DEVICE" \
     --width "${CAPTURE_SIZE%x*}" \
     --height "${CAPTURE_SIZE#*x}" \
-    --fps 0 \
+    --fps "$CAPTURE_FPS" \
+    --cuda-device "$CAMERA_CUDA_DEVICE" \
     --plane-distance "$PLANE_DISTANCE" \
     --plane-width "$PLANE_WIDTH" \
     --plane-offset-x "$PLANE_OFFSET_X" \
@@ -336,8 +348,13 @@ trap cleanup EXIT INT TERM
 
 capture_input="${CAPTURE_DISPLAY}+${CAPTURE_OFFSET}"
 status_ok "streaming ${capture_input} ${CAPTURE_SIZE}@${CAPTURE_FPS}fps -> ${DEVICE}"
+if command -v v4l2-ctl >/dev/null 2>&1; then
+    v4l2-ctl -d "$DEVICE" \
+        --set-fmt-video-out="width=${CAPTURE_SIZE%x*},height=${CAPTURE_SIZE#*x},pixelformat=YUYV" \
+        --set-parm="$CAPTURE_FPS" >/dev/null 2>&1 || true
+fi
 ffmpeg -nostdin -hide_banner -loglevel warning \
-    -f x11grab -draw_mouse 1 \
+    -f x11grab -draw_mouse "$CAPTURE_DRAW_MOUSE" \
     -framerate "$CAPTURE_FPS" \
     -video_size "$CAPTURE_SIZE" \
     -i "$capture_input" \
@@ -382,14 +399,18 @@ if [[ "$USE_LITE_CAMERA_STREAMER" == "true" ]]; then
     cxr_host_volume_path="${CXR_HOST_VOLUME_PATH:-$HOME/.cloudxr}"
     xr_runtime_json="${XR_RUNTIME_JSON:-${cxr_host_volume_path}/openxr_cloudxr.json}"
     nv_cxr_runtime_dir="${NV_CXR_RUNTIME_DIR:-${cxr_host_volume_path}/run}"
-    hand_log_dir="$(dirname "$XR_HAND_LOG_PATH")"
     xr_status_dir="$(dirname "$XR_STATUS_PATH")"
-    mkdir -p "$hand_log_dir"
     mkdir -p "$xr_status_dir"
-    if [[ "${NEWTON_CLEAR_XR_HAND_LOG:-1}" == "1" ]]; then
-        : > "$XR_HAND_LOG_PATH"
-        chmod 0666 "$XR_HAND_LOG_PATH" >/dev/null 2>&1 || true
-        status_ok "cleared XR hand log=$XR_HAND_LOG_PATH"
+    if [[ "$ENABLE_HAND_LOG" == "1" ]]; then
+        hand_log_dir="$(dirname "$XR_HAND_LOG_PATH")"
+        mkdir -p "$hand_log_dir"
+        if [[ "${NEWTON_CLEAR_XR_HAND_LOG:-1}" == "1" ]]; then
+            : > "$XR_HAND_LOG_PATH"
+            chmod 0666 "$XR_HAND_LOG_PATH" >/dev/null 2>&1 || true
+            status_ok "cleared XR hand log=$XR_HAND_LOG_PATH"
+        fi
+    else
+        status_ok "XR hand JSONL logging disabled"
     fi
     docker_args=(
         --rm
@@ -400,20 +421,24 @@ if [[ "$USE_LITE_CAMERA_STREAMER" == "true" ]]; then
         --ulimit stack=33554432
         -e "XR_RUNTIME_JSON=${xr_runtime_json}"
         -e "NV_CXR_RUNTIME_DIR=${nv_cxr_runtime_dir}"
-        -e "TELEOP_XR_HAND_LOG_PATH=${XR_HAND_LOG_PATH}"
-        -e "TELEOP_XR_HAND_LOG_STRIDE=${XR_HAND_LOG_STRIDE}"
         -e "TELEOP_XR_STATUS_PATH=${XR_STATUS_PATH}"
         -e "TELEOP_CAMERA_XR_RECOVERY_MAX_RETRIES=${XR_RECOVERY_MAX_RETRIES}"
         -e "TELEOP_CAMERA_XR_RECOVERY_DELAY_S=${XR_RECOVERY_DELAY_S}"
-        -e "NVIDIA_VISIBLE_DEVICES=${NVIDIA_VISIBLE_DEVICES:-all}"
+        -e "NVIDIA_VISIBLE_DEVICES=${NEWTON_CAMERA_STREAMER_VISIBLE_DEVICES:-${NVIDIA_VISIBLE_DEVICES:-all}}"
         -e "NVIDIA_DRIVER_CAPABILITIES=${NVIDIA_DRIVER_CAPABILITIES:-graphics,video,compute,utility,display}"
         -e "VK_ICD_FILENAMES=${VK_ICD_FILENAMES:-/etc/vulkan/icd.d/nvidia_icd.json}"
         -v /dev:/dev
         -v /run/udev:/run/udev:rw
         -v "${cxr_host_volume_path}:${cxr_host_volume_path}:ro"
         -v "${CONFIG_PATH}:/config/${config_basename}:ro"
-        -v "${hand_log_dir}:${hand_log_dir}:rw"
     )
+    if [[ "$ENABLE_HAND_LOG" == "1" ]]; then
+        docker_args+=(
+            -e "TELEOP_XR_HAND_LOG_PATH=${XR_HAND_LOG_PATH}"
+            -e "TELEOP_XR_HAND_LOG_STRIDE=${XR_HAND_LOG_STRIDE}"
+            -v "${hand_log_dir}:${hand_log_dir}:rw"
+        )
+    fi
     if [[ -f /etc/vulkan/icd.d/nvidia_icd.json ]]; then
         docker_args+=(-v /etc/vulkan/icd.d/nvidia_icd.json:/etc/vulkan/icd.d/nvidia_icd.json:ro)
     fi

@@ -1804,7 +1804,15 @@ class Example:
                 raise ValueError(f"Unsupported solver backend: {args.solver_backend!r}")
         self._l10_bottle_contact_frame = 0
         self._l10_bottle_contact_log_file = None
-        self._l10_bottle_contact_log_path = _resolve_output_path(args.l10_bottle_contact_log_path)
+        self._l10_bottle_contact_log_enabled = bool(args.l10_bottle_contact_log)
+        self._l10_bottle_contact_log_stride = max(1, int(args.l10_bottle_contact_log_stride))
+        self._l10_bottle_contact_log_path = (
+            _resolve_output_path(args.l10_bottle_contact_log_path)
+            if args.l10_bottle_contact_log_path is not None
+            else None
+        )
+        self.viewer_contacts_enabled = bool(args.viewer_contacts)
+        self.viewer_hydro_contact_surface_enabled = bool(args.viewer_hydro_contact_surface)
         self._shape_body_host = self.model.shape_body.numpy().copy()
         self._l10_shape_indices = frozenset(
             shape_index
@@ -1895,6 +1903,17 @@ class Example:
         print("[newton-quest-teleop] scene reset to initial state", flush=True)
 
     def _open_l10_bottle_contact_log(self) -> None:
+        if not self._l10_bottle_contact_log_enabled or self._l10_bottle_contact_log_path is None:
+            print("L10-bottle contact log: disabled", flush=True)
+            print(
+                "L10-bottle contact stop:"
+                f" enabled={self.l10_bottle_contact_stop_enabled}"
+                f" threshold={self.l10_bottle_contact_stop_threshold_m:g}m"
+                f" release={self.l10_bottle_contact_stop_release_m:g}m",
+                flush=True,
+            )
+            return
+
         self._l10_bottle_contact_log_path.parent.mkdir(parents=True, exist_ok=True)
         self._l10_bottle_contact_log_file = self._l10_bottle_contact_log_path.open("w", encoding="utf-8")
         atexit.register(self.close_l10_bottle_contact_log)
@@ -1906,6 +1925,7 @@ class Example:
         print(
             "L10-bottle contact log:"
             f" path={self._l10_bottle_contact_log_path}"
+            f" stride={self._l10_bottle_contact_log_stride}"
             f" l10_shapes={len(self._l10_shape_indices)}"
             f" bottle_shape={self._dynamic_bottle_collision_shape}"
             f" bottle_label={bottle_label}",
@@ -1943,8 +1963,17 @@ class Example:
 
     def _log_l10_bottle_contacts(self) -> None:
         log_file = self._l10_bottle_contact_log_file
-        if log_file is None or self.contacts is None or self.state_0.body_q is None:
+        should_write_log = (
+            log_file is not None
+            and self._l10_bottle_contact_frame % self._l10_bottle_contact_log_stride == 0
+        )
+        if not self.l10_bottle_contact_stop_enabled and not should_write_log:
+            self._l10_bottle_contact_frame += 1
+            return
+
+        if self.contacts is None or self.state_0.body_q is None:
             self._update_l10_bottle_contact_stop({})
+            self._l10_bottle_contact_frame += 1
             return
 
         raw_contact_count = int(self.contacts.rigid_contact_count.numpy()[0])
@@ -1954,8 +1983,8 @@ class Example:
         shape1 = self.contacts.rigid_contact_shape1.numpy()[:active_contact_count]
         point0 = self.contacts.rigid_contact_point0.numpy()[:active_contact_count]
         point1 = self.contacts.rigid_contact_point1.numpy()[:active_contact_count]
-        offset0 = self.contacts.rigid_contact_offset0.numpy()[:active_contact_count]
-        offset1 = self.contacts.rigid_contact_offset1.numpy()[:active_contact_count]
+        offset0 = self.contacts.rigid_contact_offset0.numpy()[:active_contact_count] if should_write_log else None
+        offset1 = self.contacts.rigid_contact_offset1.numpy()[:active_contact_count] if should_write_log else None
         normal = self.contacts.rigid_contact_normal.numpy()[:active_contact_count]
         margin0 = self.contacts.rigid_contact_margin0.numpy()[:active_contact_count]
         margin1 = self.contacts.rigid_contact_margin1.numpy()[:active_contact_count]
@@ -1976,8 +2005,6 @@ class Example:
             body1 = int(self._shape_body_host[shape_index1])
             support0_world = _transform_point_from_body_q(body_q, body0, point0[contact_index])
             support1_world = _transform_point_from_body_q(body_q, body1, point1[contact_index])
-            surface0_world = _transform_point_from_body_q(body_q, body0, point0[contact_index] + offset0[contact_index])
-            surface1_world = _transform_point_from_body_q(body_q, body1, point1[contact_index] + offset1[contact_index])
 
             normal_shape0_to_shape1 = np.asarray(normal[contact_index], dtype=np.float64).reshape(3)
             normal_norm = float(np.linalg.norm(normal_shape0_to_shape1))
@@ -2001,44 +2028,48 @@ class Example:
                     penetration_m,
                 )
 
-            records.append(
-                {
-                    "contact_index": int(contact_index),
-                    "shape0": self._contact_shape_record(shape_index0),
-                    "shape1": self._contact_shape_record(shape_index1),
-                    "l10_link_label": l10_link_label,
-                    "l10_shape_index": int(l10_shape_index),
-                    "bottle_shape_index": int(self._dynamic_bottle_collision_shape),
-                    "world_point": _json_vec3(0.5 * (surface0_world + surface1_world)),
-                    "support_point0_world": _json_vec3(support0_world),
-                    "support_point1_world": _json_vec3(support1_world),
-                    "surface_point0_world": _json_vec3(surface0_world),
-                    "surface_point1_world": _json_vec3(surface1_world),
-                    "normal_shape0_to_shape1": _json_vec3(normal_shape0_to_shape1),
-                    "normal_l10_to_bottle": _json_vec3(normal_l10_to_bottle),
-                    "separation_m": separation_m,
-                    "penetration_m": penetration_m,
-                    "margin0_m": float(margin0[contact_index]),
-                    "margin1_m": float(margin1[contact_index]),
-                }
-            )
+            if should_write_log:
+                surface0_world = _transform_point_from_body_q(body_q, body0, point0[contact_index] + offset0[contact_index])
+                surface1_world = _transform_point_from_body_q(body_q, body1, point1[contact_index] + offset1[contact_index])
+                records.append(
+                    {
+                        "contact_index": int(contact_index),
+                        "shape0": self._contact_shape_record(shape_index0),
+                        "shape1": self._contact_shape_record(shape_index1),
+                        "l10_link_label": l10_link_label,
+                        "l10_shape_index": int(l10_shape_index),
+                        "bottle_shape_index": int(self._dynamic_bottle_collision_shape),
+                        "world_point": _json_vec3(0.5 * (surface0_world + surface1_world)),
+                        "support_point0_world": _json_vec3(support0_world),
+                        "support_point1_world": _json_vec3(support1_world),
+                        "surface_point0_world": _json_vec3(surface0_world),
+                        "surface_point1_world": _json_vec3(surface1_world),
+                        "normal_shape0_to_shape1": _json_vec3(normal_shape0_to_shape1),
+                        "normal_l10_to_bottle": _json_vec3(normal_l10_to_bottle),
+                        "separation_m": separation_m,
+                        "penetration_m": penetration_m,
+                        "margin0_m": float(margin0[contact_index]),
+                        "margin1_m": float(margin1[contact_index]),
+                    }
+                )
 
         self._update_l10_bottle_contact_stop(max_penetration_by_finger)
-        log_file.write(
-            json.dumps(
-                {
-                    "frame": int(self._l10_bottle_contact_frame),
-                    "time_s": float(self.sim_time),
-                    "raw_rigid_contact_count": int(raw_contact_count),
-                    "rigid_contact_capacity": int(self.contacts.rigid_contact_max),
-                    "contact_count": len(records),
-                    "contacts": records,
-                },
-                separators=(",", ":"),
+        if should_write_log:
+            log_file.write(
+                json.dumps(
+                    {
+                        "frame": int(self._l10_bottle_contact_frame),
+                        "time_s": float(self.sim_time),
+                        "raw_rigid_contact_count": int(raw_contact_count),
+                        "rigid_contact_capacity": int(self.contacts.rigid_contact_max),
+                        "contact_count": len(records),
+                        "contacts": records,
+                    },
+                    separators=(",", ":"),
+                )
+                + "\n"
             )
-            + "\n"
-        )
-        log_file.flush()
+            log_file.flush()
         self._l10_bottle_contact_frame += 1
 
     def _update_l10_bottle_contact_stop(self, max_penetration_by_finger: dict[str, float]) -> None:
@@ -2326,9 +2357,11 @@ class Example:
 
         self.viewer.begin_frame(self.sim_time)
         self.viewer.log_state(self.state_0)
-        self.viewer.log_contacts(self.contacts, self.state_0)
+        if self.viewer_contacts_enabled:
+            self.viewer.log_contacts(self.contacts, self.state_0)
         if (
-            self.collision_pipeline is not None
+            self.viewer_hydro_contact_surface_enabled
+            and self.collision_pipeline is not None
             and getattr(self.collision_pipeline, "hydroelastic_sdf", None) is not None
             and hasattr(self.viewer, "log_hydro_contact_surface")
         ):
@@ -2895,10 +2928,34 @@ class Example:
             help="Dynamic grasp object collision shape. cylinder uses --dynamic-bottle-spec; box uses --dynamic-box-size-*.",
         )
         parser.add_argument(
+            "--viewer-contacts",
+            action=argparse.BooleanOptionalAction,
+            default=True,
+            help="Draw rigid contacts in the viewer.",
+        )
+        parser.add_argument(
+            "--viewer-hydro-contact-surface",
+            action=argparse.BooleanOptionalAction,
+            default=True,
+            help="Draw hydroelastic contact surfaces in the viewer.",
+        )
+        parser.add_argument(
             "--l10-bottle-contact-log-path",
             type=Path,
             default=DEFAULT_L10_BOTTLE_CONTACT_LOG,
-            help="Required JSONL dump of per-frame L10 hand contacts against the dynamic bottle cylinder.",
+            help="JSONL dump path for L10 hand contacts against the dynamic bottle cylinder.",
+        )
+        parser.add_argument(
+            "--l10-bottle-contact-log",
+            action=argparse.BooleanOptionalAction,
+            default=False,
+            help="Write detailed L10-bottle contact JSONL. Disabled by default because it is expensive in VR.",
+        )
+        parser.add_argument(
+            "--l10-bottle-contact-log-stride",
+            type=int,
+            default=30,
+            help="Write one detailed L10-bottle contact log frame every N rendered frames.",
         )
         parser.add_argument(
             "--l10-bottle-contact-stop",

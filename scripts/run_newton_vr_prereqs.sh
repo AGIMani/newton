@@ -17,12 +17,13 @@ WEB_MODE="${WEB_MODE:-image}"
 START_CLOUDXR=1
 START_WEB=1
 START_VOICE=1
-START_VR_OUTPUT=1
+START_VR_OUTPUT="${NEWTON_START_VR_OUTPUT:-1}"
 CHECK_ONLY=0
 REEXEC_DOCKER_GROUP="${NEWTON_VR_PREREQS_REEXEC_DOCKER:-0}"
 ORIGINAL_ARGS=("$@")
 WITH_SCENE=1
 SCENE_DEVICE="${SCENE_DEVICE:-cuda:0}"
+TELEOP_INPUT_SOURCE="${TELEOP_INPUT_SOURCE:-quest}"
 SCENE_ARGS=()
 
 usage() {
@@ -33,8 +34,10 @@ Starts the Newton Quest teleop stack in one terminal:
   1. python -m isaacteleop.cloudxr --accept-eula
   2. scripts/run_cloudxr_web_client.sh
   3. scripts/run_quest_voice_command_bridge.sh
-  4. scripts/run_newton_vr_output.sh
-  5. debug/import_dual_nero_linker_l10.py --quest-teleop
+  4. debug/import_dual_nero_linker_l10.py --quest-teleop
+
+The default path starts the Quest sim-screen/XR-plane and hand skeleton overlay,
+but teleop reads Quest/OpenXR hands directly instead of the overlay JSONL log.
 
 Options:
   --display :N[.S]       X11 display to capture for Newton/VR output (default: $DISPLAY or :0)
@@ -49,7 +52,10 @@ Options:
   --skip-cloudxr         Do not start CloudXR runtime
   --skip-web             Do not start CloudXR web client
   --skip-voice           Do not start Quest voice bridge
+  --with-vr-output       Start VR sim-screen/XR output via camera_streamer (default)
   --skip-vr-output       Do not start VR sim-screen/XR output
+  --teleop-input-source overlay-log|quest
+                         Quest hand input source (default: quest)
   --with-scene           Start the Newton scene in this terminal (default)
   --no-scene             Only start VR prerequisites/output; run Newton separately
   --scene-device DEVICE  Newton device passed to --device (default: cuda:0)
@@ -85,7 +91,15 @@ while [[ $# -gt 0 ]]; do
         --skip-cloudxr) START_CLOUDXR=0; shift ;;
         --skip-web) START_WEB=0; shift ;;
         --skip-voice) START_VOICE=0; shift ;;
+        --with-vr-output) START_VR_OUTPUT=1; shift ;;
         --skip-vr-output) START_VR_OUTPUT=0; shift ;;
+        --teleop-input-source)
+            case "$2" in
+                overlay-log|quest) TELEOP_INPUT_SOURCE="$2" ;;
+                *) err "--teleop-input-source must be overlay-log or quest"; usage >&2; exit 2 ;;
+            esac
+            shift 2
+            ;;
         --with-scene) WITH_SCENE=1; shift ;;
         --no-scene) WITH_SCENE=0; shift ;;
         --scene-device) SCENE_DEVICE="$2"; shift 2 ;;
@@ -241,10 +255,12 @@ else
     check_ok "capture display=${DISPLAY_ARG}"
 fi
 
-if command -v ffmpeg >/dev/null 2>&1; then
-    check_ok "ffmpeg=$(command -v ffmpeg)"
-else
-    check_error "missing ffmpeg"
+if [[ "${START_VR_OUTPUT}" -eq 1 ]]; then
+    if command -v ffmpeg >/dev/null 2>&1; then
+        check_ok "ffmpeg=$(command -v ffmpeg)"
+    else
+        check_error "missing ffmpeg"
+    fi
 fi
 
 if command -v docker >/dev/null 2>&1; then
@@ -264,28 +280,32 @@ else
     check_error "missing docker"
 fi
 
-if [[ -e /dev/video44 ]]; then
-    check_ok "sim screen device=/dev/video44"
-    if command -v v4l2-ctl >/dev/null 2>&1; then
-        video44_output_fmt="$(v4l2-ctl -d /dev/video44 --get-fmt-video-out 2>&1 || true)"
-        video44_info="$(v4l2-ctl -d /dev/video44 --all 2>&1 || true)"
-        if grep -Eq "Width/Height|Pixel Format" <<<"${video44_output_fmt}" \
-            || grep -Eq "Video Output|Video Output Multiplanar" <<<"${video44_info}"; then
-            check_ok "sim screen output capability=V4L2 output"
+if [[ "${START_VR_OUTPUT}" -eq 1 ]]; then
+    if [[ -e /dev/video44 ]]; then
+        check_ok "sim screen device=/dev/video44"
+        if command -v v4l2-ctl >/dev/null 2>&1; then
+            video44_output_fmt="$(v4l2-ctl -d /dev/video44 --get-fmt-video-out 2>&1 || true)"
+            video44_info="$(v4l2-ctl -d /dev/video44 --all 2>&1 || true)"
+            if grep -Eq "Width/Height|Pixel Format" <<<"${video44_output_fmt}" \
+                || grep -Eq "Video Output|Video Output Multiplanar" <<<"${video44_info}"; then
+                check_ok "sim screen output capability=V4L2 output"
+            else
+                check_error "/dev/video44 is present but is not a V4L2 output device"
+                check_warn "current output format query:"
+                sed -n '1,12p' <<<"${video44_output_fmt}" >&2
+                check_warn "reload it with:"
+                check_warn "sudo modprobe -r v4l2loopback"
+                check_warn "sudo modprobe v4l2loopback video_nr=44 card_label=teleop_sim_screen exclusive_caps=1 max_buffers=2 max_width=1920 max_height=1080"
+            fi
         else
-            check_error "/dev/video44 is present but is not a V4L2 output device"
-            check_warn "current output format query:"
-            sed -n '1,12p' <<<"${video44_output_fmt}" >&2
-            check_warn "reload it with:"
-            check_warn "sudo modprobe -r v4l2loopback"
-            check_warn "sudo modprobe v4l2loopback video_nr=44 card_label=teleop_sim_screen exclusive_caps=1 max_buffers=2 max_width=1920 max_height=1080"
+            check_warn "v4l2-ctl not found; cannot validate /dev/video44 capabilities"
         fi
     else
-        check_warn "v4l2-ctl not found; cannot validate /dev/video44 capabilities"
+        check_error "sim screen device missing: /dev/video44"
+        check_warn "create once with: sudo modprobe v4l2loopback video_nr=44 card_label=teleop_sim_screen exclusive_caps=1 max_buffers=2 max_width=1920 max_height=1080"
     fi
 else
-    check_error "sim screen device missing: /dev/video44"
-    check_warn "create once with: sudo modprobe v4l2loopback video_nr=44 card_label=teleop_sim_screen exclusive_caps=1 max_buffers=2 max_width=1920 max_height=1080"
+    check_ok "sim-screen camera_streamer output disabled"
 fi
 
 if [[ ! -x "${SCRIPT_DIR}/run_cloudxr_web_client.sh" ]]; then
@@ -294,7 +314,7 @@ fi
 if [[ ! -x "${SCRIPT_DIR}/run_quest_voice_command_bridge.sh" ]]; then
     check_error "missing executable: scripts/run_quest_voice_command_bridge.sh"
 fi
-if [[ ! -x "${SCRIPT_DIR}/run_newton_vr_output.sh" ]]; then
+if [[ "${START_VR_OUTPUT}" -eq 1 && ! -x "${SCRIPT_DIR}/run_newton_vr_output.sh" ]]; then
     check_error "missing executable: scripts/run_newton_vr_output.sh"
 fi
 if [[ "${WITH_SCENE}" -eq 1 && ! -f "${REPO_ROOT}/debug/import_dual_nero_linker_l10.py" ]]; then
@@ -558,10 +578,18 @@ if [[ "${WITH_SCENE}" -eq 1 ]]; then
 else
     ok "Next terminal for scene: conda activate newton && python debug/import_dual_nero_linker_l10.py --device ${SCENE_DEVICE} --quest-teleop"
 fi
+ok "teleop input source=${TELEOP_INPUT_SOURCE}"
 
 if [[ "${WITH_SCENE}" -eq 1 ]]; then
     if [[ "${START_VR_OUTPUT}" -eq 1 ]]; then
-        start_bg "newton_vr_output" "${SCRIPT_DIR}/run_newton_vr_output.sh" --display "${DISPLAY_ARG}" --python "${TELEOP_PYTHON_BIN}"
+        vr_output_args=(
+            --display "${DISPLAY_ARG}"
+            --python "${TELEOP_PYTHON_BIN}"
+        )
+        if [[ "${TELEOP_INPUT_SOURCE}" == "quest" ]]; then
+            vr_output_args+=(--disable-hand-log)
+        fi
+        start_bg "newton_vr_output" "${SCRIPT_DIR}/run_newton_vr_output.sh" "${vr_output_args[@]}"
         vr_output_pid="${PIDS[$((${#PIDS[@]} - 1))]}"
         sleep 3
         if ! kill -0 "${vr_output_pid}" >/dev/null 2>&1; then
@@ -571,7 +599,11 @@ if [[ "${WITH_SCENE}" -eq 1 ]]; then
             exit 1
         fi
     else
-        warn "--with-scene used with --skip-vr-output; Quest overlay hand samples may be unavailable"
+        warn "skipping camera_streamer VR output; sim-screen XR plane and overlay hand skeleton are disabled"
+        if [[ "${TELEOP_INPUT_SOURCE}" == "overlay-log" ]]; then
+            err "--teleop-input-source overlay-log requires --with-vr-output to produce hand samples"
+            exit 2
+        fi
     fi
     XR_STATUS_PATH="${TELEOP_XR_STATUS_PATH:-${NV_CXR_RUNTIME_DIR:-${HOME}/.cloudxr/run}/teleop_xr_status.json}"
     XR_HAND_LOG_PATH="${TELEOP_XR_HAND_LOG_PATH:-${REPO_ROOT}/logs/xr_debug/camera_overlay_hand.jsonl}"
@@ -585,11 +617,13 @@ if [[ "${WITH_SCENE}" -eq 1 ]]; then
     DISPLAY="${DISPLAY_ARG}" PYTHONPATH="${scene_pythonpath}" "${SCENE_PYTHON_BIN}" "${REPO_ROOT}/debug/import_dual_nero_linker_l10.py" \
         --device "${SCENE_DEVICE}" \
         --quest-teleop \
-        --teleop-input-source overlay-log \
+        --teleop-input-source "${TELEOP_INPUT_SOURCE}" \
         --teleop-overlay-hand-log-path "${XR_HAND_LOG_PATH}" \
         --teleop-startup-timeout-s "${TELEOP_STARTUP_TIMEOUT_S:-300}" \
         --teleop-xr-status-path "${XR_STATUS_PATH}" \
         --no-capture-graph \
+        --no-viewer-contacts \
+        --no-viewer-hydro-contact-surface \
         "${SCENE_ARGS[@]}"
 elif [[ "${START_VR_OUTPUT}" -eq 1 ]]; then
     log "starting VR output in foreground; press Ctrl+C here to stop the whole stack"
