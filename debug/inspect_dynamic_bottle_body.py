@@ -274,7 +274,6 @@ class Example:
         _, _, _, world_com = self.bottle_state()
         self.viewer.begin_frame(self.sim_time)
         self.viewer.log_state(self.state_0)
-        self.log_collision_proxies()
         self.viewer.log_contacts(self.contacts, self.state_0)
         self.viewer.log_points(
             "/dynamic_bottle/com",
@@ -356,7 +355,7 @@ class Example:
         parser.add_argument(
             "--show-collision-proxies",
             action=argparse.BooleanOptionalAction,
-            default=True,
+            default=False,
             help="Render blue/red collision proxy cylinders in the viewer.",
         )
         return parser

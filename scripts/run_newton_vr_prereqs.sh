@@ -686,6 +686,10 @@ if [[ "${WITH_SCENE}" -eq 1 ]]; then
     if [[ -n "${NEWTON_TELEOP_LOOP_HZ:-}" ]]; then
         scene_perf_args+=(--teleop-loop-hz "${NEWTON_TELEOP_LOOP_HZ}")
     fi
+    scene_bottle_args=(
+        --dynamic-object-shape "${NEWTON_DYNAMIC_OBJECT_SHAPE:-cylinder}"
+        --dynamic-bottle-spec "${NEWTON_DYNAMIC_BOTTLE_SPEC:-${REPO_ROOT}/debug/dynamic_bottle_body.json}"
+    )
     scene_contact_args=(
         --drive-hand-target-ke "${NEWTON_DRIVE_HAND_TARGET_KE:-80}"
         --drive-hand-target-kd "${NEWTON_DRIVE_HAND_TARGET_KD:-15}"
@@ -722,6 +726,7 @@ if [[ "${WITH_SCENE}" -eq 1 ]]; then
         --no-viewer-hydro-contact-surface \
         "${scene_mode_args[@]}" \
         "${scene_perf_args[@]}" \
+        "${scene_bottle_args[@]}" \
         "${scene_contact_args[@]}" \
         "${SCENE_ARGS[@]}"
 elif [[ "${START_VR_OUTPUT}" -eq 1 && "${VR_OUTPUT_MODE}" == "legacy-v4l2" ]]; then

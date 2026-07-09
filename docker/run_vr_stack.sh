@@ -68,6 +68,13 @@ shell_quote() {
     printf '%q' "$1"
 }
 
+append_env_assignment_if_set() {
+    local var_name="$1"
+    if [[ -n "${!var_name+x}" ]]; then
+        cmd+=" ${var_name}=$(shell_quote "${!var_name}")"
+    fi
+}
+
 reexec_with_docker_group_if_possible() {
     if [[ "${NEWTON_RUN_VR_STACK_REEXEC_DOCKER:-0}" == "1" ]]; then
         return 1
@@ -82,11 +89,18 @@ reexec_with_docker_group_if_possible() {
         return 1
     fi
 
-    cmd="cd $(shell_quote "${REPO_DIR}") && NEWTON_RUN_VR_STACK_REEXEC_DOCKER=1 DISPLAY=$(shell_quote "${DISPLAY_ARG}") exec $(shell_quote "$0")"
+    cmd="cd $(shell_quote "${REPO_DIR}") && NEWTON_RUN_VR_STACK_REEXEC_DOCKER=1 DISPLAY=$(shell_quote "${DISPLAY_ARG}")"
+    append_env_assignment_if_set NEWTON_VR_GPU
+    append_env_assignment_if_set NEWTON_VR_OUTPUT_MODE
+    append_env_assignment_if_set NEWTON_DYNAMIC_OBJECT_SHAPE
+    append_env_assignment_if_set NEWTON_DYNAMIC_BOTTLE_SPEC
+    append_env_assignment_if_set IMAGE_NAME
+    append_env_assignment_if_set NEWTON_DIRECT_GPU_IMAGE
+    cmd+=" exec $(shell_quote "$0")"
     for arg in "${ORIGINAL_ARGS[@]}"; do
         cmd+=" $(shell_quote "${arg}")"
     done
-    printf '[vr-docker] current shell cannot access docker.sock; re-executing with sg docker\n' >&2
+    printf '[vr-docker] current shell cannot access docker.sock; re-executing this command inside docker group via sg docker\n' >&2
     exec sg docker -c "${cmd}"
 }
 
@@ -200,6 +214,8 @@ docker_args=(
     -e "NEWTON_CAMERA_STREAMER_LITE_IMAGE=${CAMERA_STREAMER_LITE_IMAGE}"
     -e "NEWTON_VR_OUTPUT_MODE=${VR_OUTPUT_MODE}"
     -e "NEWTON_VR_GPU=${NEWTON_VR_GPU}"
+    -e "NEWTON_DYNAMIC_OBJECT_SHAPE=${NEWTON_DYNAMIC_OBJECT_SHAPE:-cylinder}"
+    -e "NEWTON_DYNAMIC_BOTTLE_SPEC=${NEWTON_DYNAMIC_BOTTLE_SPEC:-${REPO_DIR}/debug/dynamic_bottle_body.json}"
     -e "NV_DEVICE_PROFILE=${NV_DEVICE_PROFILE:-Quest3}"
     -e "NV_CXR_ENABLE_PUSH_DEVICES=${NV_CXR_ENABLE_PUSH_DEVICES:-0}"
     -e "NVIDIA_VISIBLE_DEVICES=${NVIDIA_VISIBLE_DEVICES_ARG}"
