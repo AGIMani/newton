@@ -19,11 +19,12 @@ import warp as wp
 import newton
 import newton.examples
 
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_BOTTLE_GLB = REPO_ROOT / "assets" / "bottle.glb"
 DEFAULT_OUTPUT = REPO_ROOT / "debug" / "dynamic_bottle_body.json"
 SPEC_FORMAT = "newton_dynamic_bottle_v1"
+WATER_DENSITY_KG_PER_M3 = 1000.0
+DEFAULT_WATER_CYLINDER_HEIGHT_M = 0.03
 BOTTLE_CONTACT_MARGIN_M = 0.0
 BOTTLE_CONTACT_GAP_M = 1.0e-4
 BOTTLE_CONTACT_TORSIONAL_FRICTION = 0.02
@@ -57,6 +58,8 @@ class DynamicBottleSpec:
     rpy_deg: list[float]
     radius: float
     height: float
+    red_cylinder_height: float
+    water_density: float
     mass: float
     friction: float
     visual_local_pos: list[float]
@@ -176,7 +179,7 @@ def _mesh_texture(mesh) -> np.ndarray | None:
 
 
 def load_glb_mesh_parts(glb_path: Path) -> list[GlbMeshPart]:
-    import trimesh  # noqa: PLC0415
+    import trimesh
 
     glb_path = _resolve_path(glb_path)
     scene = trimesh.load(glb_path, force="scene")
@@ -286,9 +289,21 @@ def _shape_cfg(
     return cfg
 
 
-def _density_for_cylinder_mass(mass: float, radius: float, height: float) -> float:
-    volume = math.pi * radius * radius * height
-    return float(mass / max(volume, 1.0e-9))
+def _water_mass_for_cylinder(radius: float, height: float, density: float) -> float:
+    # Bottle water level uses the same half-height convention as Newton cylinders.
+    volume = math.pi * radius * radius * (2.0 * height)
+    return float(density * max(volume, 0.0))
+
+
+def _effective_cylinder_height(height: float) -> float:
+    # Spec height fields are stored as cylinder half-height parameters for this bottle.
+    return 2.0 * float(height)
+
+
+def _water_cylinder_local_pos(blue_height: float, red_height: float) -> list[float]:
+    blue_full_height = _effective_cylinder_height(blue_height)
+    red_full_height = _effective_cylinder_height(red_height)
+    return [0.0, 0.0, 0.5 * (red_full_height - blue_full_height)]
 
 
 def build_dynamic_bottle(
@@ -302,15 +317,29 @@ def build_dynamic_bottle(
 
     parts = load_glb_mesh_parts(spec.visual_glb)
     body = builder.add_body(xform=_wp_transform_from_pos_rpy(spec.pos, spec.rpy_deg), label="dynamic_bottle")
-    density = _density_for_cylinder_mass(spec.mass, spec.radius, spec.height)
-    collision_cfg = _shape_cfg(density=density, friction=spec.friction, visible=False, colliding=True)
+    collision_cfg = _shape_cfg(density=0.0, friction=spec.friction, visible=False, colliding=True)
     cylinder_shape = builder.add_shape_cylinder(
         body=body,
         radius=spec.radius,
-        half_height=0.5 * spec.height,
+        half_height=spec.height,
         cfg=collision_cfg,
         color=(0.1, 0.55, 1.0),
         label="dynamic_bottle_collision_cylinder",
+    )
+
+    # Water is a mass-only fill volume: it shifts COM but the outer bottle handles contact.
+    water_cfg = _shape_cfg(density=spec.water_density, friction=spec.friction, visible=False, colliding=False)
+    water_cylinder_shape = builder.add_shape_cylinder(
+        body=body,
+        xform=_wp_transform_from_pos_quat(
+            _water_cylinder_local_pos(spec.height, spec.red_cylinder_height),
+            [0.0, 0.0, 0.0, 1.0],
+        ),
+        radius=spec.radius,
+        half_height=spec.red_cylinder_height,
+        cfg=water_cfg,
+        color=(1.0, 0.05, 0.03),
+        label="dynamic_bottle_water_mass_cylinder",
     )
 
     visual_cfg = _shape_cfg(density=0.0, friction=spec.friction, visible=True, colliding=False)
@@ -329,7 +358,12 @@ def build_dynamic_bottle(
             )
         )
 
-    return {"body": body, "collision_shape": cylinder_shape, "visual_shapes": visual_shapes}
+    return {
+        "body": body,
+        "collision_shape": cylinder_shape,
+        "water_collision_shape": water_cylinder_shape,
+        "visual_shapes": visual_shapes,
+    }
 
 
 def dynamic_bottle_spec_from_dict(data: dict[str, Any], *, base_dir: Path) -> DynamicBottleSpec:
@@ -345,6 +379,10 @@ def dynamic_bottle_spec_from_dict(data: dict[str, Any], *, base_dir: Path) -> Dy
         rpy_deg=[float(v) for v in body["rpy_deg"]],
         radius=float(collision["radius"]),
         height=float(collision["height"]),
+        red_cylinder_height=float(
+            collision.get("red_cylinder_height", collision.get("red_height", DEFAULT_WATER_CYLINDER_HEIGHT_M))
+        ),
+        water_density=float(collision.get("water_density", WATER_DENSITY_KG_PER_M3)),
         mass=float(body["mass"]),
         friction=float(collision["friction"]),
         visual_local_pos=[float(v) for v in visual["local_position"]],
@@ -362,6 +400,7 @@ def load_dynamic_bottle_spec(path: Path) -> DynamicBottleSpec:
 
 
 def dynamic_bottle_spec_to_dict(spec: DynamicBottleSpec, *, output_path: Path) -> dict[str, Any]:
+    water_mass = _water_mass_for_cylinder(spec.radius, spec.red_cylinder_height, spec.water_density)
     try:
         spec.visual_glb.relative_to(REPO_ROOT)
         output_path.parent.relative_to(REPO_ROOT)
@@ -374,7 +413,7 @@ def dynamic_bottle_spec_to_dict(spec: DynamicBottleSpec, *, output_path: Path) -
         "body": {
             "position": [float(v) for v in spec.pos],
             "rpy_deg": [float(v) for v in spec.rpy_deg],
-            "mass": float(spec.mass),
+            "mass": float(water_mass),
             "dynamic": True,
             "gravity": True,
         },
@@ -382,6 +421,8 @@ def dynamic_bottle_spec_to_dict(spec: DynamicBottleSpec, *, output_path: Path) -
             "type": "cylinder",
             "radius": float(spec.radius),
             "height": float(spec.height),
+            "red_cylinder_height": float(spec.red_cylinder_height),
+            "water_density": float(spec.water_density),
             "friction": float(spec.friction),
         },
         "visual": {
@@ -402,31 +443,48 @@ class Example:
         self.frame_dt = 1.0 / self.fps
         self.sim_time = 0.0
         self.output_path = _resolve_path(args.output)
-        self.visual_glb = _resolve_path(args.visual_glb)
+        input_path = _resolve_path(args.input) if args.input is not None else self.output_path
+        if input_path.exists():
+            self.spec = load_dynamic_bottle_spec(input_path)
+            self.status = f"Loaded {input_path}"
+            print(self.status, flush=True)
+            parts = load_glb_mesh_parts(self.spec.visual_glb)
+        else:
+            visual_glb = _resolve_path(args.visual_glb)
+            parts = load_glb_mesh_parts(visual_glb)
+            fit = fit_cylinder_envelope(parts, margin=float(args.fit_margin))
+            radius = float(args.radius if args.radius is not None else fit.radius)
+            height = float(args.height if args.height is not None else fit.height)
 
-        parts = load_glb_mesh_parts(self.visual_glb)
-        fit = fit_cylinder_envelope(parts, margin=float(args.fit_margin))
-        radius = float(args.radius if args.radius is not None else fit.radius)
-        height = float(args.height if args.height is not None else fit.height)
+            self.spec = DynamicBottleSpec(
+                visual_glb=visual_glb,
+                pos=[args.pos_x, args.pos_y, args.pos_z],
+                rpy_deg=[args.roll, args.pitch, args.yaw],
+                radius=radius,
+                height=height,
+                red_cylinder_height=float(
+                    args.red_cylinder_height
+                    if args.red_cylinder_height is not None
+                    else DEFAULT_WATER_CYLINDER_HEIGHT_M
+                ),
+                water_density=float(args.water_density),
+                mass=0.0,
+                friction=float(args.friction),
+                visual_local_pos=list(fit.local_pos),
+                visual_local_quat_xyzw=list(fit.local_quat_xyzw),
+                fit_margin=float(args.fit_margin),
+            )
+            self.status = ""
 
-        self.spec = DynamicBottleSpec(
-            visual_glb=self.visual_glb,
-            pos=[args.pos_x, args.pos_y, args.pos_z],
-            rpy_deg=[args.roll, args.pitch, args.yaw],
-            radius=radius,
-            height=height,
-            mass=float(args.mass),
-            friction=float(args.friction),
-            visual_local_pos=list(fit.local_pos),
-            visual_local_quat_xyzw=list(fit.local_quat_xyzw),
-            fit_margin=float(args.fit_margin),
-        )
-        self.fit = fit
-        self.status = ""
+        self.visual_glb = self.spec.visual_glb
+        self.fit = fit_cylinder_envelope(parts, margin=float(self.spec.fit_margin))
         self._dirty = True
         self._preview_cylinder_mesh: str | None = None
+        self._preview_red_cylinder_mesh: str | None = None
         self._preview_cylinder_color = wp.array([wp.vec3(0.1, 0.55, 1.0)], dtype=wp.vec3)
         self._preview_cylinder_material = wp.array([wp.vec4(0.45, 0.0, 0.0, 0.0)], dtype=wp.vec4)
+        self._preview_red_cylinder_color = wp.array([wp.vec3(1.0, 0.05, 0.03)], dtype=wp.vec3)
+        self._preview_red_cylinder_material = wp.array([wp.vec4(0.55, 0.0, 0.0, 0.0)], dtype=wp.vec4)
 
         builder = newton.ModelBuilder(up_axis="Z", gravity=args.gravity)
         handles = build_dynamic_bottle(builder, self.spec)
@@ -435,10 +493,12 @@ class Example:
 
         self.body_index = int(handles["body"])
         self.cylinder_shape = int(handles["collision_shape"])
+        self.water_cylinder_shape = int(handles["water_collision_shape"])
         self.model = builder.finalize(device=args.device)
         self.state_0 = self.model.state()
         self.contacts = self.model.contacts()
         self._body_q_host = self.state_0.body_q.numpy().copy()
+        self._shape_transform_host = self.model.shape_transform.numpy().copy()
         self._shape_scale_host = self.model.shape_scale.numpy().copy()
         self.apply_preview_update()
 
@@ -457,11 +517,34 @@ class Example:
         self._dirty = False
         self.spec.radius = max(float(self.spec.radius), 1.0e-4)
         self.spec.height = max(float(self.spec.height), 1.0e-4)
-        self.spec.mass = max(float(self.spec.mass), 1.0e-6)
+        self.spec.red_cylinder_height = min(max(float(self.spec.red_cylinder_height), 1.0e-4), self.spec.height)
+        self.spec.water_density = max(float(self.spec.water_density), 0.0)
+        self.spec.mass = _water_mass_for_cylinder(
+            self.spec.radius,
+            self.spec.red_cylinder_height,
+            self.spec.water_density,
+        )
 
         self._body_q_host[self.body_index, :] = self.current_body_transform_row()
         self.state_0.body_q = wp.array(self._body_q_host, dtype=wp.transform, device=self.model.device)
-        self._shape_scale_host[self.cylinder_shape, :] = (self.spec.radius, 0.5 * self.spec.height, 0.0)
+        self._shape_scale_host[self.cylinder_shape, :] = (self.spec.radius, self.spec.height, 0.0)
+        self._shape_transform_host[self.water_cylinder_shape, :] = (
+            *_water_cylinder_local_pos(self.spec.height, self.spec.red_cylinder_height),
+            0.0,
+            0.0,
+            0.0,
+            1.0,
+        )
+        self._shape_scale_host[self.water_cylinder_shape, :] = (
+            self.spec.radius,
+            self.spec.red_cylinder_height,
+            0.0,
+        )
+        self.model.shape_transform = wp.array(
+            self._shape_transform_host,
+            dtype=wp.transform,
+            device=self.model.device,
+        )
         self.model.shape_scale = wp.array(self._shape_scale_host, dtype=wp.vec3, device=self.model.device)
         self.model.bvh_refit_shapes(self.state_0)
 
@@ -481,8 +564,15 @@ class Example:
         self.viewer.begin_frame(self.sim_time)
         self.viewer.log_state(self.state_0)
         self.log_collision_cylinder_preview()
+        self.log_red_cylinder_preview()
         self.viewer.log_contacts(self.contacts, self.state_0)
         self.viewer.end_frame()
+
+    def red_cylinder_transform(self) -> wp.transform:
+        rotation = _rotation_from_euler_deg(tuple(self.spec.rpy_deg))
+        pos = np.asarray(self.spec.pos, dtype=np.float64)
+        pos += rotation[:, 2] * _water_cylinder_local_pos(self.spec.height, self.spec.red_cylinder_height)[2]
+        return _wp_transform_from_pos_rpy(pos.tolist(), self.spec.rpy_deg)
 
     def log_collision_cylinder_preview(self) -> None:
         if not hasattr(self.viewer, "_populate_geometry") or not hasattr(self.viewer, "log_instances"):
@@ -513,6 +603,36 @@ class Example:
             self._preview_cylinder_material,
         )
 
+    def log_red_cylinder_preview(self) -> None:
+        red_transform = wp.array([self.red_cylinder_transform()], dtype=wp.transform)
+        if not hasattr(self.viewer, "_populate_geometry") or not hasattr(self.viewer, "log_instances"):
+            self.viewer.log_shapes(
+                "/dynamic_bottle_red_cylinder_preview",
+                newton.GeoType.CYLINDER,
+                (self.spec.radius, self.spec.red_cylinder_height),
+                red_transform,
+                self._preview_red_cylinder_color,
+                self._preview_red_cylinder_material,
+            )
+            return
+
+        if self._preview_red_cylinder_mesh is None:
+            self._preview_red_cylinder_mesh = self.viewer._populate_geometry(
+                int(newton.GeoType.CYLINDER),
+                (1.0, 1.0),
+                0.0,
+                True,
+            )
+
+        self.viewer.log_instances(
+            "/dynamic_bottle_red_cylinder_preview",
+            self._preview_red_cylinder_mesh,
+            red_transform,
+            wp.array([wp.vec3(self.spec.radius, self.spec.radius, self.spec.red_cylinder_height)], dtype=wp.vec3),
+            self._preview_red_cylinder_color,
+            self._preview_red_cylinder_material,
+        )
+
     def gui(self, imgui) -> None:
         changed = False
         imgui.text("Dynamic bottle body")
@@ -525,6 +645,16 @@ class Example:
         updated, value = imgui.slider_float("Cylinder Height [m]", float(self.spec.height), 0.02, 0.5, "%.4f")
         if updated:
             self.spec.height = value
+            changed = True
+        updated, value = imgui.slider_float(
+            "Red Cylinder Height [m]",
+            float(self.spec.red_cylinder_height),
+            0.001,
+            max(float(self.spec.height), 0.001),
+            "%.4f",
+        )
+        if updated:
+            self.spec.red_cylinder_height = value
             changed = True
 
         imgui.separator()
@@ -542,10 +672,9 @@ class Example:
                 changed = True
 
         imgui.separator()
-        updated, value = imgui.slider_float("Mass [kg]", float(self.spec.mass), 0.005, 1.0, "%.4f")
-        if updated:
-            self.spec.mass = value
-            changed = True
+        water_mass = _water_mass_for_cylinder(self.spec.radius, self.spec.red_cylinder_height, self.spec.water_density)
+        imgui.text(f"Water Density [kg/m^3]: {self.spec.water_density:.1f}")
+        imgui.text(f"Computed Water Mass [kg]: {water_mass:.4f}")
         updated, value = imgui.slider_float("Friction", float(self.spec.friction), 0.0, 8.0, "%.3f")
         if updated:
             self.spec.friction = value
@@ -571,10 +700,28 @@ class Example:
         parser = newton.examples.create_parser()
         parser.description = "Edit a dynamic cylindrical bottle body with a GLB visual."
         parser.add_argument("--visual-glb", type=Path, default=DEFAULT_BOTTLE_GLB, help="Bottle GLB visual asset.")
+        parser.add_argument(
+            "--input",
+            type=Path,
+            default=None,
+            help="Existing dynamic bottle JSON spec to edit. Defaults to --output if it already exists.",
+        )
         parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT, help="Output dynamic bottle JSON spec.")
         parser.add_argument("--save-spec", action="store_true", help="Write the current spec immediately after startup.")
         parser.add_argument("--radius", type=_positive_float, default=None, help="Initial cylinder radius [m].")
         parser.add_argument("--height", type=_positive_float, default=None, help="Initial cylinder height [m].")
+        parser.add_argument(
+            "--red-cylinder-height",
+            type=_positive_float,
+            default=DEFAULT_WATER_CYLINDER_HEIGHT_M,
+            help="Initial red cylinder height [m].",
+        )
+        parser.add_argument(
+            "--water-density",
+            type=_positive_float,
+            default=WATER_DENSITY_KG_PER_M3,
+            help="Water cylinder density [kg/m^3].",
+        )
         parser.add_argument("--fit-margin", type=float, default=-0.001, help="Extra envelope margin around the GLB [m].")
         parser.add_argument("--pos-x", type=float, default=0.42, help="Initial body X position [m].")
         parser.add_argument("--pos-y", type=float, default=0.07, help="Initial body Y position [m].")
@@ -582,7 +729,7 @@ class Example:
         parser.add_argument("--roll", type=float, default=-90.0, help="Initial body roll [deg].")
         parser.add_argument("--pitch", type=float, default=0.0, help="Initial body pitch [deg].")
         parser.add_argument("--yaw", type=float, default=0.0, help="Initial body yaw [deg].")
-        parser.add_argument("--mass", type=_positive_float, default=0.22, help="Dynamic bottle mass [kg].")
+        parser.add_argument("--mass", type=_positive_float, default=0.22, help="Deprecated; ignored.")
         parser.add_argument("--friction", type=float, default=3.0, help="Cylinder collision friction coefficient.")
         parser.add_argument("--gravity", type=float, default=-9.81, help="Gravity acceleration along Z [m/s^2].")
         parser.add_argument("--fps", type=float, default=60.0, help="Viewer frame rate [Hz].")

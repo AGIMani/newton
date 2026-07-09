@@ -21,9 +21,9 @@ from newton.geometry import HydroelasticSDF
 from newton.sensors import SensorTiledCamera
 
 try:
-    from debug.edit_dynamic_bottle_body import build_dynamic_bottle, load_dynamic_bottle_spec
+    from debug.edit_dynamic_bottle_body import _water_mass_for_cylinder, build_dynamic_bottle, load_dynamic_bottle_spec
 except ModuleNotFoundError:
-    from edit_dynamic_bottle_body import build_dynamic_bottle, load_dynamic_bottle_spec
+    from edit_dynamic_bottle_body import _water_mass_for_cylinder, build_dynamic_bottle, load_dynamic_bottle_spec
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -1045,20 +1045,22 @@ def _configure_dynamic_bottle_collision(
     hydroelastic_sdf_narrow_band_range: tuple[float, float],
     hydroelastic_kh: float,
 ) -> None:
-    shape_index = int(handles["collision_shape"])
-    builder.shape_margin[shape_index] = float(margin)
-    builder.shape_gap[shape_index] = float(gap)
-    builder.shape_material_mu_torsional[shape_index] = float(torsional_friction)
-    builder.shape_material_mu_rolling[shape_index] = float(rolling_friction)
-    if hydroelastic_contacts:
-        _set_shape_hydroelastic_sdf(
-            builder,
-            shape_index,
-            gap=hydroelastic_gap,
-            sdf_max_resolution=hydroelastic_sdf_max_resolution,
-            sdf_narrow_band_range=hydroelastic_sdf_narrow_band_range,
-            kh=hydroelastic_kh,
-        )
+    shape_indices = [int(handles["collision_shape"])]
+
+    for shape_index in shape_indices:
+        builder.shape_margin[shape_index] = float(margin)
+        builder.shape_gap[shape_index] = float(gap)
+        builder.shape_material_mu_torsional[shape_index] = float(torsional_friction)
+        builder.shape_material_mu_rolling[shape_index] = float(rolling_friction)
+        if hydroelastic_contacts:
+            _set_shape_hydroelastic_sdf(
+                builder,
+                shape_index,
+                gap=hydroelastic_gap,
+                sdf_max_resolution=hydroelastic_sdf_max_resolution,
+                sdf_narrow_band_range=hydroelastic_sdf_narrow_band_range,
+                kh=hydroelastic_kh,
+            )
 
 
 def _shape_cfg(
@@ -1101,12 +1103,17 @@ def _shape_cfg(
 
 def _dynamic_object_proxy_from_bottle_spec(bottle_spec) -> DynamicObjectProxy:
     radius = float(bottle_spec.radius)
-    half_height = 0.5 * float(bottle_spec.height)
+    half_height = float(bottle_spec.height)
+    mass = _water_mass_for_cylinder(
+        radius,
+        float(getattr(bottle_spec, "red_cylinder_height", bottle_spec.height)),
+        float(getattr(bottle_spec, "water_density", 1000.0)),
+    )
     return DynamicObjectProxy(
         shape="cylinder",
         pos=[float(v) for v in bottle_spec.pos],
         rpy_deg=[float(v) for v in bottle_spec.rpy_deg],
-        mass=float(bottle_spec.mass),
+        mass=mass,
         friction=float(bottle_spec.friction),
         half_extents=(radius, radius, half_height),
         visual_glb=Path(bottle_spec.visual_glb),
@@ -1168,7 +1175,7 @@ def _build_dynamic_box_object(
 
 def _oriented_cylinder_aabb_half_extents(rotation: np.ndarray, radius: float, height: float) -> np.ndarray:
     axis = np.asarray(rotation, dtype=np.float64).reshape(3, 3)[:, 2]
-    half_height = 0.5 * float(height)
+    half_height = float(height)
     radius = float(radius)
     radial = np.sqrt(np.maximum(0.0, 1.0 - axis * axis)) * radius
     return np.abs(axis) * half_height + radial
@@ -1631,7 +1638,11 @@ class Example:
                     dynamic_bottle_spec = load_dynamic_bottle_spec(self.dynamic_bottle_spec_path)
                     dynamic_bottle_spec.pos = [float(v) for v in bottle_position]
                     dynamic_bottle_spec.rpy_deg = list(_euler_deg_from_rotation(bottle_rotation))
-                    dynamic_bottle_spec.mass = float(args.dynamic_bottle_mass)
+                    dynamic_bottle_spec.mass = _water_mass_for_cylinder(
+                        dynamic_bottle_spec.radius,
+                        dynamic_bottle_spec.red_cylinder_height,
+                        dynamic_bottle_spec.water_density,
+                    )
                     dynamic_bottle_spec.friction = float(args.dynamic_bottle_friction)
                     dynamic_object_proxy = _dynamic_object_proxy_from_bottle_spec(dynamic_bottle_spec)
             else:
@@ -1826,6 +1837,9 @@ class Example:
         self._dynamic_bottle_collision_shape = (
             int(self.dynamic_bottle_handles["collision_shape"]) if self.dynamic_bottle_handles is not None else -1
         )
+        self._dynamic_bottle_collision_shapes = frozenset(
+            [self._dynamic_bottle_collision_shape] if self._dynamic_bottle_collision_shape >= 0 else []
+        )
         self._open_l10_bottle_contact_log()
 
         newton.eval_fk(self.model, self.model.joint_q, self.model.joint_qd, self.state_0)
@@ -1956,6 +1970,7 @@ class Example:
             f" stride={self._l10_bottle_contact_log_stride}"
             f" l10_shapes={len(self._l10_shape_indices)}"
             f" bottle_shape={self._dynamic_bottle_collision_shape}"
+            f" bottle_shapes={sorted(self._dynamic_bottle_collision_shapes)}"
             f" bottle_label={bottle_label}",
             flush=True,
         )
@@ -1987,7 +2002,7 @@ class Example:
             "body_index": int(body_index),
             "body_label": body_label,
             "is_l10": shape_index in self._l10_shape_indices,
-            "is_bottle": shape_index == self._dynamic_bottle_collision_shape,
+            "is_bottle": shape_index in self._dynamic_bottle_collision_shapes,
         }
 
     def _log_l10_bottle_contacts(self) -> None:
@@ -2023,8 +2038,8 @@ class Example:
             shape_index1 = int(shape1[contact_index])
             shape0_is_l10 = shape_index0 in self._l10_shape_indices
             shape1_is_l10 = shape_index1 in self._l10_shape_indices
-            shape0_is_bottle = shape_index0 == self._dynamic_bottle_collision_shape
-            shape1_is_bottle = shape_index1 == self._dynamic_bottle_collision_shape
+            shape0_is_bottle = shape_index0 in self._dynamic_bottle_collision_shapes
+            shape1_is_bottle = shape_index1 in self._dynamic_bottle_collision_shapes
             if not ((shape0_is_l10 and shape1_is_bottle) or (shape1_is_l10 and shape0_is_bottle)):
                 continue
 
@@ -2059,7 +2074,7 @@ class Example:
                         "shape1": self._contact_shape_record(shape_index1),
                         "l10_link_label": l10_link_label,
                         "l10_shape_index": int(l10_shape_index),
-                        "bottle_shape_index": int(self._dynamic_bottle_collision_shape),
+                        "bottle_shape_index": int(shape_index1 if shape1_is_bottle else shape_index0),
                         "world_point": _json_vec3(0.5 * (surface0_world + surface1_world)),
                         "support_point0_world": _json_vec3(support0_world),
                         "support_point1_world": _json_vec3(support1_world),
