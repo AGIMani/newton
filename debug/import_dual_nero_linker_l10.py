@@ -58,6 +58,7 @@ D405_BODY_SIZE_FALLBACK = (0.042, 0.042, 0.023)
 RIGHT_D405_CONNECTOR_REL_POS_M = (0.022759, -0.004138, 0.013103)
 RIGHT_D405_CONNECTOR_REL_EULER_DEG = (79.969, 0.0, 0.0)
 D405_CAMERA_LOCAL_POS_RATIO = (0.0, 0.0, 0.5)
+D405_CAMERA_FRONT_CLEARANCE_M = 0.002
 D405_CAMERA_NEAR_M = 1.0e-4
 D405_CAMERA_FAR_M = 1.0e6
 D405_PREVIEW_SCALE = 1
@@ -1489,6 +1490,7 @@ class Example:
         self.d405_preview_scale = int(args.d405_preview_scale)
         self.d405_opencv_window = bool(args.d405_opencv_window)
         self.d455_front_clearance = float(args.d455_front_clearance)
+        self.d405_front_clearance = float(args.d405_front_clearance)
         self._d455_preview_started = False
         self._d405_preview_started = False
         self._d455_pose_logged = False
@@ -2506,6 +2508,7 @@ class Example:
             f" roi_zoom={self.d455_roi_zoom:g}"
             f" roi_center=({self.d455_roi_center_x:g},{self.d455_roi_center_y:g});"
             f" D405 enabled={self.d405_preview_enabled} {d405_width}x{d405_height} fov={self.d405_preview.fov_deg:g}"
+            f" local_z={self.d405_body_size[2] * 0.5 + self.d405_front_clearance:g}"
             f" mount_source={self.d405_mount_source}"
         )
 
@@ -2669,6 +2672,8 @@ class Example:
         local_camera_pos = np.asarray(self.d405_body_size, dtype=np.float64) * np.asarray(
             D405_CAMERA_LOCAL_POS_RATIO, dtype=np.float64
         )
+        # Genesis tolerates a ray origin on the body face; Newton needs it outside the visible box BVH.
+        local_camera_pos[2] += self.d405_front_clearance
         camera_pos = d405_pos + d405_rotation @ local_camera_pos
         camera_forward = d405_rotation @ np.asarray((0.0, 0.0, 1.0), dtype=np.float64)
         camera_up = d405_rotation @ np.asarray((0.0, 1.0, 0.0), dtype=np.float64)
@@ -3768,6 +3773,12 @@ class Example:
             type=int,
             default=D405_PREVIEW_SCALE,
             help="Integer scale for the optional OpenCV D405 preview window.",
+        )
+        parser.add_argument(
+            "--d405-front-clearance",
+            type=float,
+            default=D405_CAMERA_FRONT_CLEARANCE_M,
+            help="Extra local +Z offset from the D405 front face to avoid self-hitting its visual body.",
         )
         parser.add_argument(
             "--d405-opencv-window",
