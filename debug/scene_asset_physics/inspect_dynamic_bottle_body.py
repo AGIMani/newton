@@ -15,7 +15,7 @@ import newton
 import newton.examples
 
 try:
-    from debug.edit_dynamic_bottle_body import (
+    from debug.scene_asset_physics.edit_dynamic_bottle_body import (
         DEFAULT_OUTPUT,
         build_dynamic_bottle,
         load_dynamic_bottle_spec,

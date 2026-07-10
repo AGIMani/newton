@@ -19,7 +19,7 @@ import warp as wp
 import newton
 import newton.examples
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_BOTTLE_GLB = REPO_ROOT / "assets" / "bottle.glb"
 DEFAULT_OUTPUT = REPO_ROOT / "debug" / "dynamic_bottle_body.json"
 SPEC_FORMAT = "newton_dynamic_bottle_v1"

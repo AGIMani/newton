@@ -19,12 +19,12 @@ import newton
 import newton.examples
 
 try:
-    from debug.edit_dynamic_bottle_body import load_glb_mesh_parts
+    from debug.scene_asset_physics.edit_dynamic_bottle_body import load_glb_mesh_parts
 except ModuleNotFoundError:
     from edit_dynamic_bottle_body import load_glb_mesh_parts
 
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_SCENE_GLB = REPO_ROOT / "scene" / "scene.glb"
 DEFAULT_OUTPUT = REPO_ROOT / "debug" / "scene_collision_boxes.json"
 SPEC_FORMAT = "newton_scene_collision_boxes_v1"

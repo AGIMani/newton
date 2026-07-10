@@ -21,9 +21,17 @@ from newton.geometry import HydroelasticSDF
 from newton.sensors import SensorTiledCamera
 
 try:
-    from debug.edit_dynamic_bottle_body import _water_mass_for_cylinder, build_dynamic_bottle, load_dynamic_bottle_spec
+    from debug.scene_asset_physics.edit_dynamic_bottle_body import (
+        _water_mass_for_cylinder,
+        build_dynamic_bottle,
+        load_dynamic_bottle_spec,
+    )
 except ModuleNotFoundError:
-    from edit_dynamic_bottle_body import _water_mass_for_cylinder, build_dynamic_bottle, load_dynamic_bottle_spec
+    from scene_asset_physics.edit_dynamic_bottle_body import (
+        _water_mass_for_cylinder,
+        build_dynamic_bottle,
+        load_dynamic_bottle_spec,
+    )
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -53,15 +61,6 @@ D405_CAMERA_LOCAL_POS_RATIO = (0.0, 0.0, 0.5)
 D405_CAMERA_NEAR_M = 1.0e-4
 D405_CAMERA_FAR_M = 1.0e6
 D405_PREVIEW_SCALE = 1
-INITIAL_LEFT_ARM_Q = (
-    -0.3010692959690218,
-    1.4731277018532938,
-    -1.1596840214876325,
-    1.3072865163287928,
-    0.005689773361501515,
-    -0.06812020070533868,
-    0.21753783796857323,
-)
 INITIAL_RIGHT_ARM_Q = (
     0.2530727415391778,
     1.5579507035002182,
@@ -437,16 +436,19 @@ def _set_initial_arm_pose(
             builder.joint_target_qd[qd_index] = 0.0
         applied.append(value)
 
-    print(f"Initial {side} arm q from harness: {np.round(applied, 6).tolist()}")
+    print(f"Initial {side} arm q override: {np.round(applied, 6).tolist()}")
 
 
 def _set_initial_arm_poses(
     builder: newton.ModelBuilder,
     *,
-    left_q: tuple[float, float, float, float, float, float, float],
+    left_q: tuple[float, float, float, float, float, float, float] | None,
     right_q: tuple[float, float, float, float, float, float, float],
 ) -> None:
-    _set_initial_arm_pose(builder, side="left", values=left_q)
+    if left_q is None:
+        print("Initial left arm q: using URDF imported state")
+    else:
+        _set_initial_arm_pose(builder, side="left", values=left_q)
     _set_initial_arm_pose(builder, side="right", values=right_q)
 
 
@@ -1547,7 +1549,7 @@ class Example:
         )
         _set_initial_arm_poses(
             builder,
-            left_q=tuple(args.initial_left_arm_q),
+            left_q=tuple(args.initial_left_arm_q) if args.initial_left_arm_q is not None else None,
             right_q=tuple(args.initial_right_arm_q),
         )
         _configure_dual_nero_drive_joints(
@@ -2856,8 +2858,8 @@ class Example:
         parser.add_argument(
             "--initial-left-arm-q",
             type=_vec7,
-            default=INITIAL_LEFT_ARM_Q,
-            help="Initial left Nero arm joint pose [rad], formatted q1,...,q7. Defaults to harness INITIAL_LEFT_ARM_Q.",
+            default=None,
+            help="Override the URDF initial left Nero arm joint pose [rad], formatted q1,...,q7.",
         )
         parser.add_argument(
             "--initial-right-arm-q",
