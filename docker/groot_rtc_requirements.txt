@@ -1,0 +1,6 @@
+albucore==0.0.17
+albumentations==1.4.18
+diffusers==0.38.0
+einops==0.8.2
+pyarrow==24.0.0
+transformers==4.57.6

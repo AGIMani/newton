@@ -3,6 +3,8 @@
 .venv
 conda_envs
 conda_pkgs
+checkpoints
+local_data
 logs
 debug
 __pycache__
@@ -12,4 +14,3 @@ __pycache__
 .ruff_cache
 .cache
 *.egg-info
-

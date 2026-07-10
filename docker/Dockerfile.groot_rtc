@@ -1,0 +1,21 @@
+ARG BASE_IMAGE=newton-direct-gpu:latest
+FROM ${BASE_IMAGE}
+
+ENV NO_ALBUMENTATIONS_UPDATE=1 \
+    PIP_INDEX_URL=https://pypi.org/simple \
+    PIP_EXTRA_INDEX_URL=https://pypi.nvidia.com \
+    PIP_DEFAULT_TIMEOUT=120 \
+    PIP_RETRIES=20
+
+# Keep the base image's Blackwell-capable Torch build and add its matching
+# torchvision wheel before installing the pure inference dependencies.
+RUN python -m pip install --no-cache-dir --no-deps \
+        --index-url https://download.pytorch.org/whl/cu126 \
+        torchvision==0.24.1
+
+COPY docker/groot_rtc_requirements.txt /tmp/groot_rtc_requirements.txt
+
+RUN python -m pip install --no-cache-dir -r /tmp/groot_rtc_requirements.txt \
+    && rm -f /tmp/groot_rtc_requirements.txt
+
+CMD ["python", "-c", "import torch, transformers, albumentations, pyarrow; print('GR00T RTC runtime ready', torch.__version__, transformers.__version__)"]

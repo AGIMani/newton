@@ -89,3 +89,9 @@ docs/_static/viser/
 /solver_convergence.png
 
 *.log
+
+# Local GR00T inference assets and generated traces
+/checkpoints/groot/checkpoint-200000/
+/checkpoints/nvidia/Cosmos-Reason2-2B/
+/local_data/groot/smooth/
+/logs/groot_newton_rtc/
