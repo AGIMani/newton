@@ -70,6 +70,10 @@ GROOT_INITIAL_RIGHT_ARM_Q = (
 )
 GROOT_D405_FOV_DEG = 72.0
 GROOT_D405_CONNECTOR_REL_EULER_DEG = (89.483, -1.020, -2.995)
+NODE0_STATE_TO_GENESIS_TRANSLATION_XYZ = (0.0, 0.059, 0.918)
+NODE0_STATE_TO_GENESIS_QUATERNION_XYZW = (0.5, 0.5, 0.5, -0.5)
+NODE0_STATE_TO_GENESIS_EEF_OFFSET_TRANSLATION_XYZ = (0.032, 0.0, -0.0235)
+NODE0_STATE_TO_GENESIS_EEF_OFFSET_QUATERNION_XYZW = (-0.5, 0.5, -0.5, 0.5)
 GROOT_INITIAL_HAND_COMMAND_Q = (
     0.1848468184,
     0.3151794076,
@@ -349,19 +353,25 @@ def _reported_hand_q_to_command(hand_q: np.ndarray) -> np.ndarray:
 
 def _rotmat_to_rot6d(rotation: np.ndarray) -> np.ndarray:
     rotation = np.asarray(rotation, dtype=np.float64).reshape(3, 3)
-    # Nero/L10 training data stores the first two rotation columns.
-    return rotation[:, :2].reshape(6, order="F").astype(np.float32)
+    # Match the live node0 GR00T bridge exactly.
+    return rotation[:2, :].reshape(6).astype(np.float32)
 
 
 def _rot6d_to_rotmat(rot6d: np.ndarray) -> np.ndarray:
-    values = np.asarray(rot6d, dtype=np.float64).reshape(6)
-    col0 = values[:3]
-    col1 = values[3:6]
-    col0 = col0 / max(float(np.linalg.norm(col0)), 1.0e-12)
-    col1 = col1 - float(np.dot(col0, col1)) * col0
-    col1 = col1 / max(float(np.linalg.norm(col1)), 1.0e-12)
-    col2 = np.cross(col0, col1)
-    return np.column_stack((col0, col1, col2))
+    rows = np.asarray(rot6d, dtype=np.float64).reshape(2, 3)
+    row0 = rows[0]
+    row1 = rows[1]
+    row0_norm = float(np.linalg.norm(row0))
+    if row0_norm <= 1.0e-8:
+        return np.eye(3, dtype=np.float64)
+    row0 = row0 / row0_norm
+    row1 = row1 - float(np.dot(row0, row1)) * row0
+    row1_norm = float(np.linalg.norm(row1))
+    if row1_norm <= 1.0e-8:
+        return np.eye(3, dtype=np.float64)
+    row1 = row1 / row1_norm
+    row2 = np.cross(row0, row1)
+    return np.vstack((row0, row1, row2))
 
 
 def _eef_9d_to_pose(eef_9d: np.ndarray) -> np.ndarray:
@@ -388,6 +398,24 @@ def _matrix_to_pose7(matrix: np.ndarray) -> Pose7:
         position_xyz=tuple(float(value) for value in pose[:3, 3]),
         quaternion_xyzw=matrix_to_quat_xyzw(rotation),
     )
+
+
+def _rigid_transform_matrix(
+    translation_xyz: tuple[float, float, float],
+    quaternion_xyzw: tuple[float, float, float, float],
+) -> np.ndarray:
+    transform = np.eye(4, dtype=np.float64)
+    transform[:3, 3] = np.asarray(translation_xyz, dtype=np.float64)
+    transform[:3, :3] = np.asarray(quat_xyzw_to_matrix(quaternion_xyzw), dtype=np.float64)
+    return transform
+
+
+def _invert_rigid_transform(transform: np.ndarray) -> np.ndarray:
+    source = np.asarray(transform, dtype=np.float64).reshape(4, 4)
+    inverse = np.eye(4, dtype=np.float64)
+    inverse[:3, :3] = source[:3, :3].T
+    inverse[:3, 3] = -inverse[:3, :3] @ source[:3, 3]
+    return inverse
 
 
 def _packed_color_to_rgb(image: wp.array[wp.uint32]) -> np.ndarray:
@@ -1029,6 +1057,7 @@ class NewtonPolicyController:
         example: scene_runtime.Example,
         *,
         arm_control_mode: str,
+        eef_transform_mode: str,
         eef_frame_update: str,
         eef_body_suffix: str,
         action_dt_s: float,
@@ -1044,6 +1073,7 @@ class NewtonPolicyController:
     ) -> None:
         self.example = example
         self.arm_control_mode = str(arm_control_mode)
+        self.eef_transform_mode = str(eef_transform_mode)
         self.eef_frame_update = str(eef_frame_update)
         self.action_dt_s = max(float(action_dt_s), 1.0e-6)
         self.max_arm_joint_step = max(0.0, float(max_arm_joint_step))
@@ -1060,6 +1090,14 @@ class NewtonPolicyController:
         self._joint_limit_upper = self.example.model.joint_limit_upper.numpy().copy()
         self._policy_from_world_rotation = np.eye(3, dtype=np.float64)
         self._policy_from_world_translation = np.zeros(3, dtype=np.float64)
+        self._state_to_genesis_transform = _rigid_transform_matrix(
+            NODE0_STATE_TO_GENESIS_TRANSLATION_XYZ,
+            NODE0_STATE_TO_GENESIS_QUATERNION_XYZW,
+        )
+        self._eef_offset_transform = _rigid_transform_matrix(
+            NODE0_STATE_TO_GENESIS_EEF_OFFSET_TRANSLATION_XYZ,
+            NODE0_STATE_TO_GENESIS_EEF_OFFSET_QUATERNION_XYZW,
+        )
         self._eef_frame_calibrated = False
 
         self.kinematics = NewtonLinkKinematicsModel(
@@ -1068,6 +1106,10 @@ class NewtonPolicyController:
             arm_joint_q_indices=self.arm_q_indices,
             eef_body_suffix=str(eef_body_suffix),
             finite_difference_rad=float(ik_finite_difference_rad),
+        )
+        newton_world_from_base = self._body_pose_matrix("/right_base_link")
+        self._genesis_to_world_transform = (
+            newton_world_from_base @ _invert_rigid_transform(self._state_to_genesis_transform)
         )
         initial_q = tuple(float(value) for value in self.arm_q())
         lower_limits = tuple(float(self._joint_limit_lower[index]) for index in self.arm_qd_indices)
@@ -1095,8 +1137,10 @@ class NewtonPolicyController:
         self.ik.reset(self._robot_state(timestamp_s=0.0))
         print(
             "[groot-control] "
-            f"arm_mode={self.arm_control_mode} eef_frame_update={self.eef_frame_update} "
-            f"eef_body={eef_body_suffix} arm_joint_fallback={self.arm_joint_fallback}",
+            f"arm_mode={self.arm_control_mode} eef_transform={self.eef_transform_mode} "
+            f"eef_frame_update={self.eef_frame_update} "
+            f"eef_body={eef_body_suffix} arm_joint_fallback={self.arm_joint_fallback} "
+            f"genesis_to_newton_xyz={np.round(self._genesis_to_world_transform[:3, 3], 6).tolist()}",
             flush=True,
         )
 
@@ -1127,6 +1171,21 @@ class NewtonPolicyController:
         if label not in self.qd_index_by_label:
             raise KeyError(f"Newton model is missing scalar joint DOF {label!r}")
         return int(self.qd_index_by_label[label])
+
+    def _body_pose_matrix(self, label_suffix: str) -> np.ndarray:
+        body_index = next(
+            (index for index, label in enumerate(self.example.model.body_label) if label.endswith(label_suffix)),
+            None,
+        )
+        if body_index is None:
+            raise ValueError(f"Newton model is missing body ending with {label_suffix!r}")
+        body_q = self.example.state_0.body_q.numpy()[body_index]
+        return _pose7_to_matrix(
+            Pose7(
+                position_xyz=tuple(float(value) for value in body_q[:3]),
+                quaternion_xyzw=tuple(float(value) for value in body_q[3:7]),
+            )
+        )
 
     def _clip_joint(self, label: str, value: float) -> float:
         qd_index = self.qd_index_by_label.get(label)
@@ -1159,6 +1218,60 @@ class NewtonPolicyController:
     def calibrate_eef_frame(self, observation_eef_9d: np.ndarray, *, timestamp_s: float) -> dict[str, Any]:
         if self.arm_control_mode != "eef_ik":
             return {"enabled": False, "reason": "arm_control_mode_joint_target"}
+        if self.eef_transform_mode == "node0_fixed":
+            if self._eef_frame_calibrated:
+                return {
+                    "enabled": True,
+                    "updated": False,
+                    "reason": "node0_fixed_transform",
+                    "state_to_genesis_translation": np.asarray(
+                        NODE0_STATE_TO_GENESIS_TRANSLATION_XYZ, dtype=np.float64
+                    ),
+                    "state_to_genesis_rot6d": _rotmat_to_rot6d(self._state_to_genesis_transform[:3, :3]),
+                    "eef_offset_translation": np.asarray(
+                        NODE0_STATE_TO_GENESIS_EEF_OFFSET_TRANSLATION_XYZ, dtype=np.float64
+                    ),
+                    "eef_offset_rot6d": _rotmat_to_rot6d(self._eef_offset_transform[:3, :3]),
+                    "genesis_to_newton_translation": self._genesis_to_world_transform[:3, 3].copy(),
+                    "genesis_to_newton_rot6d": _rotmat_to_rot6d(self._genesis_to_world_transform[:3, :3]),
+                }
+
+            policy_pose = _eef_9d_to_pose(observation_eef_9d)
+            robot_state = self._robot_state(timestamp_s=timestamp_s)
+            assert robot_state.ee_pose is not None
+            current_world_pose = _pose7_to_matrix(robot_state.ee_pose)
+            self._eef_frame_calibrated = True
+            self.ik.reset(robot_state)
+            mapped_world_pose = self._policy_pose_to_world_pose(policy_pose)
+            residual = mapped_world_pose[:3, 3] - current_world_pose[:3, 3]
+            print(
+                "[groot-eef-frame] node0 fixed A*T_policy*B with Genesis-to-Newton alignment "
+                f"policy_xyz={np.round(policy_pose[:3, 3], 6).tolist()} "
+                f"mapped_world_xyz={np.round(mapped_world_pose[:3, 3], 6).tolist()} "
+                f"current_world_xyz={np.round(current_world_pose[:3, 3], 6).tolist()} "
+                f"initial_residual={np.round(residual, 6).tolist()}",
+                flush=True,
+            )
+            return {
+                "enabled": True,
+                "updated": True,
+                "reason": "node0_fixed_transform",
+                "policy_xyz": policy_pose[:3, 3].copy(),
+                "mapped_world_xyz": mapped_world_pose[:3, 3].copy(),
+                "current_world_xyz": current_world_pose[:3, 3].copy(),
+                "initial_residual_xyz": residual.copy(),
+                "state_to_genesis_translation": np.asarray(
+                    NODE0_STATE_TO_GENESIS_TRANSLATION_XYZ, dtype=np.float64
+                ),
+                "state_to_genesis_rot6d": _rotmat_to_rot6d(self._state_to_genesis_transform[:3, :3]),
+                "eef_offset_translation": np.asarray(
+                    NODE0_STATE_TO_GENESIS_EEF_OFFSET_TRANSLATION_XYZ, dtype=np.float64
+                ),
+                "eef_offset_rot6d": _rotmat_to_rot6d(self._eef_offset_transform[:3, :3]),
+                "genesis_to_newton_translation": self._genesis_to_world_transform[:3, 3].copy(),
+                "genesis_to_newton_rot6d": _rotmat_to_rot6d(self._genesis_to_world_transform[:3, :3]),
+            }
+
         should_update = not self._eef_frame_calibrated or self.eef_frame_update == "replan"
         if not should_update:
             return {
@@ -1203,6 +1316,13 @@ class NewtonPolicyController:
 
     def _world_pose_to_policy_pose(self, world_pose: np.ndarray) -> np.ndarray:
         world = np.asarray(world_pose, dtype=np.float64).reshape(4, 4)
+        if self.eef_transform_mode == "node0_fixed":
+            return (
+                _invert_rigid_transform(self._state_to_genesis_transform)
+                @ _invert_rigid_transform(self._genesis_to_world_transform)
+                @ world
+                @ _invert_rigid_transform(self._eef_offset_transform)
+            )
         policy = np.eye(4, dtype=np.float64)
         policy[:3, 3] = self._policy_from_world_rotation @ world[:3, 3] + self._policy_from_world_translation
         policy[:3, :3] = self._policy_from_world_rotation @ world[:3, :3]
@@ -1212,6 +1332,13 @@ class NewtonPolicyController:
         if not self._eef_frame_calibrated:
             raise RuntimeError("EEF action frame has not been calibrated from the current observation")
         policy = np.asarray(policy_pose, dtype=np.float64).reshape(4, 4)
+        if self.eef_transform_mode == "node0_fixed":
+            return (
+                self._genesis_to_world_transform
+                @ self._state_to_genesis_transform
+                @ policy
+                @ self._eef_offset_transform
+            )
         world = np.eye(4, dtype=np.float64)
         inverse_rotation = self._policy_from_world_rotation.T
         world[:3, 3] = inverse_rotation @ (policy[:3, 3] - self._policy_from_world_translation)
@@ -1388,6 +1515,7 @@ class GrootRtcExample(scene_runtime.Example):
         self.controller = NewtonPolicyController(
             self,
             arm_control_mode=str(args.arm_control_mode),
+            eef_transform_mode=str(args.eef_transform_mode),
             eef_frame_update=str(args.eef_frame_update),
             eef_body_suffix=str(args.eef_body_suffix),
             action_dt_s=self.action_dt_s,
@@ -1663,7 +1791,7 @@ def _add_policy_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--smooth-loop", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--image-source", choices=("sim", "smooth"), default="sim")
     parser.add_argument("--state-source", choices=("sim", "smooth"), default="sim")
-    parser.add_argument("--sim-ego-roi", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--sim-ego-roi", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--groot-initial-hand-q", type=_vec10, default=GROOT_INITIAL_HAND_COMMAND_Q)
     parser.add_argument("--instruction", default="", help="Empty uses the selected smooth episode task.")
     parser.add_argument("--start-policy", action=argparse.BooleanOptionalAction, default=False)
@@ -1679,7 +1807,18 @@ def _add_policy_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--rtc-frozen-steps", type=int, default=4)
     parser.add_argument("--rtc-ramp-rate", type=float, default=3.0)
     parser.add_argument("--arm-control-mode", choices=("eef_ik", "joint_target"), default="eef_ik")
-    parser.add_argument("--eef-frame-update", choices=("once", "replan"), default="once")
+    parser.add_argument(
+        "--eef-transform-mode",
+        choices=("node0_fixed", "initial_calibration"),
+        default="node0_fixed",
+        help="Use node0's fixed A*T*B transform or the older observation-based alignment.",
+    )
+    parser.add_argument(
+        "--eef-frame-update",
+        choices=("once", "replan"),
+        default="once",
+        help="Frame update cadence used only with --eef-transform-mode initial_calibration.",
+    )
     parser.add_argument("--eef-body-suffix", default="/right_revo2_flange")
     parser.add_argument("--arm-joint-fallback", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--max-arm-joint-step", type=float, default=0.045)
@@ -1707,6 +1846,10 @@ def create_parser() -> argparse.ArgumentParser:
         d405_preview=True,
         d455_opencv_window=False,
         d405_opencv_window=False,
+        d455_render_width=320,
+        d455_render_height=180,
+        d405_width=640,
+        d405_height=480,
         initial_right_arm_q=GROOT_INITIAL_RIGHT_ARM_Q,
         d405_fov=GROOT_D405_FOV_DEG,
         d405_connector_rel_euler=GROOT_D405_CONNECTOR_REL_EULER_DEG,

@@ -51,13 +51,12 @@ python tools/run_newton_groot_rtc_control.py \
   --start-policy
 ```
 
-The policy receives the raw `640x480` D405 image. For the simulated D455, the
-default `--sim-ego-roi` applies the scene camera's 2x ROI at `(0.50, 0.65)` so
-the bottle, target rectangle, and arm match the framing of the training
-`ego_view`. The resulting `640x400` RGB crop is sent directly to the processor;
-the runner does not resize, pad, or letterbox it. Use `--no-sim-ego-roi` only
-for camera-framing diagnostics. Smooth images are always passed through
-unchanged, and the checkpoint processor performs its own resize and crop.
+The simulator defaults match node0's live policy inputs: raw `320x180`
+`ego_view` RGB and raw `640x480` `wrist_view` RGB. The runner does not crop,
+resize, pad, or letterbox either image before the checkpoint processor. Use
+`--sim-ego-roi` only for the older 2x scene-camera crop during framing
+diagnostics. Smooth images are always passed through unchanged, and the
+checkpoint processor performs its own resize and crop.
 
 ## Smooth episode images
 
@@ -87,18 +86,23 @@ ramp rate of 3.0. Use `--no-rtc` for ordinary chunk replanning. Use
 `--dry-run-policy` to test the Newton control loop without loading the model.
 
 The default `--arm-control-mode eef_ik` treats decoded `eef_9d` as an absolute
-TCP target in the checkpoint's rokae-base frame. At the first replan, the
-runner aligns that frame to the current Newton `/right_revo2_flange` world
-pose, maps each action target into Newton world coordinates, and applies it
-through `NewtonLinkKinematicsModel` and the full-pose differential IK
-controller. `arm_joint_target` is used only if EEF IK fails. Use
+target in the checkpoint's policy-state frame. It uses node0's fixed
+`A * T_policy * B` transform to produce a Newton world
+`/right_revo2_flange` target: `A` has translation `(0, 0.059, 0.918)` and
+quaternion `(0.5, 0.5, 0.5, -0.5)` in XYZW order; `B` has translation
+`(0.032, 0, -0.0235)` and quaternion `(-0.5, 0.5, -0.5, 0.5)`. The result is
+then mapped from Genesis world to Newton world using the current
+`/right_base_link` pose. This explicit scene alignment preserves node0's
+transform while accounting for the Newton assembly's different base height.
+The target is applied through `NewtonLinkKinematicsModel` and the full-pose
+differential IK controller. `arm_joint_target` is used only if EEF IK fails. Use
 `--arm-control-mode joint_target` to select the old direct joint-alias path, or
 `--no-arm-joint-fallback` to make an IK failure stop execution.
 
-The Nero/L10 `rot6d` layout is the first two rotation-matrix columns in
-column-major order: `[R00, R10, R20, R01, R11, R21]`. This matches the smooth
-training data and the Harness deployment bridge; it is not the first-two-rows
-layout used by some generic rot6d implementations.
+The Nero/L10 `rot6d` layout now exactly follows node0's live GR00T bridge: the
+first two rotation-matrix rows in row-major order,
+`[R00, R01, R02, R10, R11, R12]`. State encoding and decoded EEF actions use
+the same convention.
 
 This runner also selects the checkpoint/Harness right-arm initial pose instead
 of the generic debug scene pose. The left arm continues to use the URDF initial
@@ -115,12 +119,13 @@ and a small connector-frame optical-axis correction. Together these reproduce
 the D405's wider horizontal field and keep the nearby bottle in the lower-right
 region seen in training. The generic scene's D405 body mount remains unchanged.
 
-The default frame transform is fixed after the first observation. Use
-`--eef-frame-update replan` only when deliberately recalibrating it at every
-chunk. Per-tick arm and hand changes are bounded by `--max-arm-joint-step` and
-`--max-hand-joint-step`. The trace records policy/world EEF targets, current
-world TCP, IK status, position/orientation error, and the actual arm control
-source for every executed action.
+The node0 transform is fixed and does not depend on the first simulator
+observation. Use `--eef-transform-mode initial_calibration` to reproduce the
+older dynamic alignment; in that compatibility mode, `--eef-frame-update replan`
+recalibrates at every chunk. Per-tick arm and hand changes are bounded
+by `--max-arm-joint-step` and `--max-hand-joint-step`. The trace records
+policy/world EEF targets, current world TCP, IK status, position/orientation
+error, and the actual arm control source for every executed action.
 
 Policy execution is disabled until `--start-policy` is supplied. Every replan
 and executed target is written to the JSONL trace unless `--no-policy-trace`
