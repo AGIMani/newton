@@ -8,7 +8,9 @@
 
 from __future__ import annotations
 
+import tempfile
 import unittest
+from pathlib import Path
 
 import numpy as np
 
@@ -68,13 +70,132 @@ class TestNode0GrootAlignment(unittest.TestCase):
             atol=1.0e-12,
         )
 
+    def test_node0_recorded_action_maps_to_recorded_genesis_command(self) -> None:
+        policy_eef_9d = np.asarray(
+            (
+                -0.31398898363113403,
+                -0.35250094532966614,
+                0.11842889338731766,
+                0.1266147345304489,
+                0.9485205411911011,
+                -0.2903059124946594,
+                -0.9918148517608643,
+                0.11618837714195251,
+                -0.052948661148548126,
+            ),
+            dtype=np.float64,
+        )
+        state_to_genesis = groot_runtime._rigid_transform_matrix(
+            groot_runtime.NODE0_STATE_TO_GENESIS_TRANSLATION_XYZ,
+            groot_runtime.NODE0_STATE_TO_GENESIS_QUATERNION_XYZW,
+        )
+        eef_offset = groot_runtime._rigid_transform_matrix(
+            groot_runtime.NODE0_STATE_TO_GENESIS_EEF_OFFSET_TRANSLATION_XYZ,
+            groot_runtime.NODE0_STATE_TO_GENESIS_EEF_OFFSET_QUATERNION_XYZW,
+        )
+
+        command_pose = state_to_genesis @ groot_runtime._eef_9d_to_pose(policy_eef_9d) @ eef_offset
+
+        np.testing.assert_allclose(
+            command_pose[:3, 3],
+            (-0.3829947270248274, 0.15444763057334623, 0.6148848766495125),
+            atol=1.0e-7,
+        )
+        expected_rotation = groot_runtime.quat_xyzw_to_matrix(
+            (-0.6543440978913473, 0.0923386986444439, 0.7413283715375681, -0.11721609036675296)
+        )
+        np.testing.assert_allclose(command_pose[:3, :3], expected_rotation, atol=1.0e-7)
+
     def test_sim_image_defaults_match_node0(self) -> None:
         args = groot_runtime.create_parser().parse_args([])
 
-        self.assertEqual((args.d455_render_width, args.d455_render_height), (320, 180))
+        self.assertEqual((args.d455_render_width, args.d455_render_height), (1280, 800))
         self.assertEqual((args.d405_width, args.d405_height), (640, 480))
-        self.assertFalse(args.sim_ego_roi)
+        self.assertTrue(args.sim_ego_roi)
         self.assertEqual(args.eef_transform_mode, "node0_fixed")
+        self.assertTrue(args.async_policy)
+        self.assertTrue(args.capture_graph)
+        self.assertEqual(args.camera_preview_fps, 15.0)
+        self.assertIsNone(args.viewer_fifo_preview)
+        self.assertEqual(
+            (args.viewer_fifo_preview_width, args.viewer_fifo_preview_height),
+            (1600, 720),
+        )
+        self.assertEqual(args.viewer_fifo_preview_input_width, 320)
+
+    def test_node0_ego_view_crops_before_frame_tap_resize(self) -> None:
+        image = np.full((800, 1280, 3), (255, 0, 0), dtype=np.uint8)
+        image[320:720, 320:960] = (0, 127, 0)
+
+        processed = groot_runtime._node0_ego_view_preprocess(
+            image,
+            zoom=2.0,
+            center_x=0.5,
+            center_y=0.65,
+        )
+
+        self.assertEqual(processed.shape, (180, 320, 3))
+        np.testing.assert_array_equal(processed, np.full((180, 320, 3), (0, 127, 0), dtype=np.uint8))
+
+    def test_async_replan_skips_elapsed_actions(self) -> None:
+        self.assertEqual(
+            groot_runtime._elapsed_action_steps(start_s=1.0, current_s=1.96, action_dt_s=0.1),
+            10,
+        )
+        self.assertEqual(
+            groot_runtime._elapsed_action_steps(start_s=2.0, current_s=1.0, action_dt_s=0.1),
+            0,
+        )
+
+    def test_viewer_fifo_preview_writes_rgb_frame(self) -> None:
+        frame = np.arange(18, dtype=np.uint8).reshape(2, 3, 3)
+
+        class FakeFrame:
+            shape = frame.shape
+
+            def numpy(self) -> np.ndarray:
+                return frame
+
+        class FakeWindow:
+            def set_size(self, width: int, height: int) -> None:
+                self.size = (width, height)
+
+        class FakeViewer:
+            def __init__(self) -> None:
+                self.renderer = type("Renderer", (), {"window": FakeWindow()})()
+
+            def get_frame(self, *, target_image, render_ui: bool):
+                self.target_image = target_image
+                self.render_ui = render_ui
+                return FakeFrame()
+
+        viewer = FakeViewer()
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "viewer.rgb"
+            preview = groot_runtime.ViewerFifoPreview(viewer, path, width=3, height=2, fps=15.0)
+            preview.capture(viewer)
+            preview.close()
+
+            self.assertEqual(viewer.renderer.window.size, (3, 2))
+            self.assertFalse(viewer.render_ui)
+            self.assertEqual(path.read_bytes(), frame.tobytes())
+
+    def test_viewer_fifo_preview_composes_exact_model_inputs(self) -> None:
+        scene = np.full((4, 4, 3), 7, dtype=np.uint8)
+        ego = np.full((1, 2, 3), (10, 20, 30), dtype=np.uint8)
+        wrist = np.full((1, 2, 3), (40, 50, 60), dtype=np.uint8)
+
+        preview = groot_runtime.ViewerFifoPreview.__new__(groot_runtime.ViewerFifoPreview)
+        preview.width = 6
+        preview.height = 4
+        preview.input_width = 2
+        preview.scene_width = 4
+
+        composed = preview._compose_frame(scene, {"ego_view": ego, "wrist_view": wrist})
+
+        np.testing.assert_array_equal(composed[:, :4], scene)
+        self.assertTrue(np.any(np.all(composed[:, 4:] == ego[0, 0], axis=2)))
+        self.assertTrue(np.any(np.all(composed[:, 4:] == wrist[0, 0], axis=2)))
 
 
 if __name__ == "__main__":

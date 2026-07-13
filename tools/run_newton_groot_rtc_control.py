@@ -6,8 +6,8 @@
 
 The policy can consume either live Newton camera renders or frames from a
 selected smooth dataset episode. State can independently come from Newton or
-the selected smooth episode. Images are passed to the checkpoint processor at
-their native resolution without manual letterboxing.
+the selected smooth episode. Simulator ego images mirror node0's D455 ROI and
+frame-tap resize before reaching the checkpoint processor.
 """
 
 from __future__ import annotations
@@ -15,6 +15,7 @@ from __future__ import annotations
 import argparse
 import atexit
 from collections import deque
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
 from functools import partial
 from importlib import metadata
@@ -26,6 +27,7 @@ import sys
 import time
 from typing import Any
 
+import cv2
 import numpy as np
 import warp as wp
 
@@ -57,6 +59,10 @@ DEFAULT_ISAAC_GROOT_ROOT = Path(
 DEFAULT_POLICY_CHECKPOINT = REPO_ROOT / "checkpoints" / "groot" / "checkpoint-200000"
 DEFAULT_VLM_MODEL = REPO_ROOT / "checkpoints" / "nvidia" / "Cosmos-Reason2-2B"
 DEFAULT_SMOOTH_DIR = REPO_ROOT / "local_data" / "groot" / "smooth"
+NODE0_EGO_SOURCE_WIDTH = 1280
+NODE0_EGO_SOURCE_HEIGHT = 800
+NODE0_EGO_INPUT_WIDTH = 320
+NODE0_EGO_INPUT_HEIGHT = 180
 DEFAULT_TRACE_JSONL = REPO_ROOT / "logs" / "groot_newton_rtc" / "trace.jsonl"
 DEFAULT_INSTRUCTION = "pick up the bottle with green cap and place it in the white rectangle area"
 GROOT_INITIAL_RIGHT_ARM_Q = (
@@ -90,6 +96,21 @@ GROOT_RUNTIME_PACKAGES = {
     "albumentations": "1.4.18",
     "albucore": "0.0.17",
 }
+
+
+@wp.kernel
+def _resize_rgb_nearest(
+    source: wp.array3d[wp.uint8],
+    target: wp.array3d[wp.uint8],
+    source_height: int,
+    source_width: int,
+    target_height: int,
+    target_width: int,
+):
+    y, x, channel = wp.tid()
+    source_y = min((y * source_height) // target_height, source_height - 1)
+    source_x = min((x * source_width) // target_width, source_width - 1)
+    target[y, x, channel] = source[source_y, source_x, channel]
 
 POLICY_HAND_JOINT_NAMES = (
     "thumb_cmc_pitch",
@@ -147,6 +168,214 @@ class CheckpointModalities:
     state: ModalitySpec
     action: ModalitySpec
     language: ModalitySpec
+
+
+@dataclass(frozen=True)
+class PolicyReplanRequest:
+    replan_index: int
+    policy_step: int
+    timeline_s: float
+    observation: dict[str, Any]
+    source_metadata: dict[str, Any]
+    rtc_seed: dict[str, np.ndarray] | None
+    seed_metadata: dict[str, Any]
+    options: dict[str, Any] | None
+    rtc_metadata: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class PolicyReplanResult:
+    request: PolicyReplanRequest
+    policy_action: dict[str, np.ndarray]
+    policy_metadata: dict[str, Any]
+    inference_s: float
+
+
+class ViewerFifoPreview:
+    """Copy the GPU viewer and exact model RGB inputs to a host FIFO."""
+
+    def __init__(
+        self,
+        viewer: Any,
+        path: Path,
+        *,
+        width: int,
+        height: int,
+        fps: float,
+        input_width: int = 0,
+    ) -> None:
+        if width <= 0 or height <= 0:
+            raise ValueError("Viewer FIFO preview dimensions must be positive")
+        if fps <= 0.0:
+            raise ValueError("Viewer FIFO preview FPS must be positive")
+        if input_width < 0 or input_width >= width:
+            raise ValueError("Viewer FIFO model-input width must be smaller than the output width")
+        if not hasattr(viewer, "get_frame"):
+            raise ValueError("Viewer FIFO preview requires the GL viewer")
+
+        self.path = path
+        self.width = int(width)
+        self.height = int(height)
+        self.fps = float(fps)
+        self.input_width = int(input_width)
+        self.scene_width = self.width - self.input_width
+        self._stream: Any | None = None
+        self._target_image: Any | None = None
+        self._resized_image: Any | None = None
+        self._next_capture_time = 0.0
+        self._failed = False
+
+        renderer = getattr(viewer, "renderer", None)
+        window = getattr(renderer, "window", None)
+        if window is not None and hasattr(window, "set_size"):
+            window.set_size(self.scene_width, self.height)
+
+    def capture(self, viewer: Any, model_images: dict[str, np.ndarray] | None = None) -> None:
+        if self._failed:
+            return
+        now = time.monotonic()
+        if now < self._next_capture_time:
+            return
+        self._next_capture_time = now + 1.0 / self.fps
+
+        try:
+            if self._stream is None:
+                self._stream = self.path.open("wb", buffering=0)
+                print(
+                    f"[groot-viewer] direct-GPU preview={self.width}x{self.height}@{self.fps:g} "
+                    f"layout=simulator+ego_view+wrist_view fifo={self.path}",
+                    flush=True,
+                )
+            frame = viewer.get_frame(target_image=self._target_image, render_ui=False)
+            self._target_image = frame
+            source_height, source_width, channels = tuple(int(value) for value in frame.shape)
+            if channels != 3:
+                raise ValueError(f"Viewer frame must have three RGB channels, got {frame.shape}")
+            output_frame = frame
+            if (source_height, source_width) != (self.height, self.scene_width):
+                expected_shape = (self.height, self.scene_width, 3)
+                if self._resized_image is None or self._resized_image.shape != expected_shape:
+                    self._resized_image = wp.empty(
+                        shape=expected_shape,
+                        dtype=wp.uint8,
+                        device=frame.device,
+                    )
+                wp.launch(
+                    _resize_rgb_nearest,
+                    dim=expected_shape,
+                    inputs=[
+                        frame,
+                        self._resized_image,
+                        source_height,
+                        source_width,
+                        self.height,
+                        self.scene_width,
+                    ],
+                    device=frame.device,
+                )
+                output_frame = self._resized_image
+            host_scene = np.ascontiguousarray(output_frame.numpy())
+            host_frame = self._compose_frame(host_scene, model_images or {})
+            remaining = memoryview(host_frame).cast("B")
+            while remaining:
+                written = self._stream.write(remaining)
+                if written is None:
+                    continue
+                remaining = remaining[written:]
+        except (BrokenPipeError, OSError, ValueError) as exc:
+            self._failed = True
+            self.close()
+            print(f"[groot-viewer] preview disabled: {exc}", flush=True)
+
+    def _compose_frame(
+        self,
+        scene: np.ndarray,
+        model_images: dict[str, np.ndarray],
+    ) -> np.ndarray:
+        if self.input_width <= 0:
+            return scene
+        frame = np.zeros((self.height, self.width, 3), dtype=np.uint8)
+        frame[:, : self.scene_width] = scene
+        frame[:, self.scene_width : self.scene_width + 2] = 210
+
+        slot_height = self.height // 2
+        slots = (
+            ("ego_view", 0, np.asarray((45, 210, 120), dtype=np.uint8)),
+            ("wrist_view", slot_height, np.asarray((255, 105, 70), dtype=np.uint8)),
+        )
+        for key, slot_y, color in slots:
+            header_height = min(4, max(0, slot_height - 1))
+            frame[slot_y : slot_y + header_height, self.scene_width :] = color
+            image = model_images.get(key)
+            if image is None:
+                continue
+            resized = _resize_rgb_preview(
+                image,
+                max_width=self.input_width,
+                max_height=max(1, slot_height - header_height),
+            )
+            image_height, image_width, _ = resized.shape
+            x = self.scene_width + (self.input_width - image_width) // 2
+            y = slot_y + header_height + max(0, (slot_height - header_height - image_height) // 2)
+            frame[y : y + image_height, x : x + image_width] = resized
+        return frame
+
+    def close(self) -> None:
+        if self._stream is not None:
+            self._stream.close()
+            self._stream = None
+
+
+def _resize_rgb_preview(image: np.ndarray, *, max_width: int, max_height: int) -> np.ndarray:
+    source = np.asarray(image, dtype=np.uint8)
+    if source.ndim != 3 or source.shape[2] != 3:
+        raise ValueError(f"Model input preview must be RGB HWC, got {source.shape}")
+    source_height, source_width, _ = source.shape
+    if source_height <= 0 or source_width <= 0:
+        raise ValueError(f"Model input preview is empty: {source.shape}")
+    scale = min(float(max_width) / source_width, float(max_height) / source_height)
+    target_width = max(1, min(max_width, int(round(source_width * scale))))
+    target_height = max(1, min(max_height, int(round(source_height * scale))))
+    if (target_height, target_width) == (source_height, source_width):
+        return np.ascontiguousarray(source)
+    y_indices = np.minimum(
+        np.arange(target_height, dtype=np.int64) * source_height // target_height,
+        source_height - 1,
+    )
+    x_indices = np.minimum(
+        np.arange(target_width, dtype=np.int64) * source_width // target_width,
+        source_width - 1,
+    )
+    return np.ascontiguousarray(source[y_indices[:, None], x_indices[None, :]])
+
+
+def _node0_ego_view_preprocess(
+    image: np.ndarray,
+    *,
+    zoom: float,
+    center_x: float,
+    center_y: float,
+) -> np.ndarray:
+    """Apply node0's camera ROI and frame-tap resize without changing RGB order."""
+    source = np.asarray(image, dtype=np.uint8)
+    if source.ndim != 3 or source.shape[2] != 3:
+        raise ValueError(f"ego_view source must be RGB HWC, got {source.shape}")
+    source_height, source_width, _ = source.shape
+    crop_x, crop_y, crop_width, crop_height = scene_runtime._roi_crop_rect(  # noqa: SLF001
+        source_width,
+        source_height,
+        zoom=float(zoom),
+        center_x=float(center_x),
+        center_y=float(center_y),
+    )
+    cropped = source[crop_y : crop_y + crop_height, crop_x : crop_x + crop_width]
+    zoomed = cv2.resize(cropped, (source_width, source_height), interpolation=cv2.INTER_LINEAR)
+    output = cv2.resize(
+        zoomed,
+        (NODE0_EGO_INPUT_WIDTH, NODE0_EGO_INPUT_HEIGHT),
+        interpolation=cv2.INTER_AREA,
+    )
+    return np.ascontiguousarray(output, dtype=np.uint8)
 
 
 def _load_json(path: Path) -> dict[str, Any]:
@@ -510,6 +739,11 @@ def _stored_rtc_action(
         count = min(int(frozen_steps), stored[key].shape[0], seed.shape[0])
         stored[key][:count] = seed[:count]
     return stored
+
+
+def _elapsed_action_steps(*, start_s: float, current_s: float, action_dt_s: float) -> int:
+    elapsed_s = max(0.0, float(current_s) - float(start_s))
+    return max(0, int(math.floor(elapsed_s / max(float(action_dt_s), 1.0e-9) + 0.5)))
 
 
 class TeleopRtcSeedManager:
@@ -1479,9 +1713,8 @@ class NewtonPolicyController:
                 if qd_index is not None:
                     self._target_qd[qd_index] = 0.0
 
-        device = self.example.model.device
-        self.example.control.joint_target_q = wp.array(self._target_q, dtype=wp.float32, device=device)
-        self.example.control.joint_target_qd = wp.array(self._target_qd, dtype=wp.float32, device=device)
+        self.example.control.joint_target_q.assign(self._target_q)
+        self.example.control.joint_target_qd.assign(self._target_qd)
         return {
             "arm_source": arm_source,
             "arm_target": None if arm_target is None else arm_target[:7].copy(),
@@ -1499,6 +1732,18 @@ class GrootRtcExample(scene_runtime.Example):
         self.groot_args = args
         self.modalities = _validate_asset_layout(args)
         super().__init__(viewer, args)
+        self.viewer_fifo_preview = (
+            ViewerFifoPreview(
+                viewer,
+                args.viewer_fifo_preview,
+                width=int(args.viewer_fifo_preview_width),
+                height=int(args.viewer_fifo_preview_height),
+                fps=float(args.viewer_fifo_preview_fps),
+                input_width=int(args.viewer_fifo_preview_input_width),
+            )
+            if args.viewer_fifo_preview is not None
+            else None
+        )
         _initialize_right_hand_pose(self, tuple(args.groot_initial_hand_q))
         if self.d455_preview is None or not self.d455_preview.enabled:
             raise ValueError("GR00T simulator images require --d455-preview")
@@ -1537,10 +1782,18 @@ class GrootRtcExample(scene_runtime.Example):
         self.policy_step = 0
         self.replan_index = 0
         self._first_observation_dumped = False
+        self._model_input_preview_images: dict[str, np.ndarray] = {}
+        self._model_input_preview_logged = False
+        self._sim_ego_preprocess_logged = False
         self.action_index = 0
         self.action_chunk: dict[str, np.ndarray] | None = None
         self.next_policy_time_s = 0.0
         self.policy_enabled = bool(args.start_policy)
+        self.async_policy = bool(args.async_policy and not args.dry_run_policy)
+        self._policy_executor: ThreadPoolExecutor | None = None
+        self._replan_future: Future[PolicyReplanResult] | None = None
+        self._policy_torch: Any | None = None
+        self._policy_cuda_stream: Any | None = None
         self.trace_path = None if args.no_policy_trace else args.trace_jsonl.expanduser().resolve()
         if self.trace_path is not None:
             self.trace_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1562,6 +1815,13 @@ class GrootRtcExample(scene_runtime.Example):
                 device=policy_device,
                 strict=bool(args.strict_policy),
             )
+            if self.async_policy:
+                import torch
+
+                self._policy_torch = torch
+                self._policy_cuda_stream = torch.cuda.Stream(device=policy_device)
+                torch.cuda.current_stream(device=policy_device).synchronize()
+                self._policy_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="groot-gpu")
 
         # Seed live image buffers once; subsequent policy calls consume the prior rendered frame.
         self.render_camera_previews()
@@ -1573,20 +1833,38 @@ class GrootRtcExample(scene_runtime.Example):
             f"episode={self.smooth.episode_index} instruction={self.instruction!r} "
             f"action_hz={args.action_fps:g} replan={self.replan_horizon} "
             f"rtc={bool(args.rtc)} arm_control={args.arm_control_mode} "
+            f"async_policy={self.async_policy} capture_graph={bool(args.capture_graph)} "
             f"start_policy={self.policy_enabled}",
             flush=True,
         )
 
     def _sim_video_observation(self) -> dict[str, np.ndarray]:
         assert self.d455_preview is not None and self.d405_preview is not None
-        ego_view = _packed_color_to_rgb(self.d455_preview.color_image)
-        if self.groot_args.sim_ego_roi:
-            ego_view = scene_runtime._roi_crop_zoom_hwc(  # noqa: SLF001
-                ego_view,
-                zoom=float(self.d455_roi_zoom),
+        ego_source = _packed_color_to_rgb(self.d455_preview.color_image)
+        roi_zoom = float(self.d455_roi_zoom) if self.groot_args.sim_ego_roi else 1.0
+        ego_view = _node0_ego_view_preprocess(
+            ego_source,
+            zoom=roi_zoom,
+            center_x=float(self.d455_roi_center_x),
+            center_y=float(self.d455_roi_center_y),
+        )
+        if not self._sim_ego_preprocess_logged:
+            source_height, source_width, _ = ego_source.shape
+            crop_rect = scene_runtime._roi_crop_rect(  # noqa: SLF001
+                source_width,
+                source_height,
+                zoom=roi_zoom,
                 center_x=float(self.d455_roi_center_x),
                 center_y=float(self.d455_roi_center_y),
             )
+            print(
+                "[groot-ego-view] node0 pipeline "
+                f"source={source_width}x{source_height} crop_xywh={crop_rect} "
+                f"zoom={roi_zoom:g} center=({self.d455_roi_center_x:g},{self.d455_roi_center_y:g}) "
+                f"model_input={NODE0_EGO_INPUT_WIDTH}x{NODE0_EGO_INPUT_HEIGHT} rgb=True",
+                flush=True,
+            )
+            self._sim_ego_preprocess_logged = True
         self.sim_video_history.append(
             {
                 "ego_view": ego_view,
@@ -1614,6 +1892,20 @@ class GrootRtcExample(scene_runtime.Example):
             state = self._sim_state_observation()
         language = {key: [[self.instruction]] for key in self.modalities.language.keys}
         observation = {"video": video, "state": state, "language": language}
+        self._model_input_preview_images = {
+            key: np.ascontiguousarray(np.asarray(value, dtype=np.uint8)[0, -1])
+            for key, value in video.items()
+            if key in {"ego_view", "wrist_view"}
+        }
+        if not self._model_input_preview_logged:
+            image_shapes = " ".join(
+                f"{key}={tuple(image.shape)}" for key, image in self._model_input_preview_images.items()
+            )
+            print(
+                f"[groot-input-preview] exact model inputs source={self.image_source} {image_shapes}",
+                flush=True,
+            )
+            self._model_input_preview_logged = True
         if self.groot_args.dump_first_observation_dir is not None and not self._first_observation_dumped:
             from PIL import Image
 
@@ -1636,9 +1928,9 @@ class GrootRtcExample(scene_runtime.Example):
         }
         return observation, metadata
 
-    def _replan(self) -> None:
+    def _prepare_replan(self) -> PolicyReplanRequest:
         observation, source_metadata = self._build_observation()
-        timeline_s = self.policy_step * self.action_dt_s
+        timeline_s = float(self.sim_time)
         observation_eef = np.asarray(observation["state"]["eef_9d"], dtype=np.float32).reshape(-1, 9)[-1]
         source_metadata["eef_frame"] = self.controller.calibrate_eef_frame(
             observation_eef,
@@ -1661,52 +1953,125 @@ class GrootRtcExample(scene_runtime.Example):
             frozen_steps=int(self.groot_args.rtc_frozen_steps),
             ramp_rate=float(self.groot_args.rtc_ramp_rate),
         )
-        started = time.perf_counter()
-        policy_action, policy_metadata = self.policy.get_action(
-            observation,
-            previous_action=rtc_seed if options is not None else None,
+        return PolicyReplanRequest(
+            replan_index=self.replan_index,
+            policy_step=self.policy_step,
+            timeline_s=timeline_s,
+            observation=observation,
+            source_metadata=source_metadata,
+            rtc_seed=rtc_seed,
+            seed_metadata=seed_metadata,
             options=options,
+            rtc_metadata=rtc_metadata,
         )
+
+    def _infer_replan(self, request: PolicyReplanRequest) -> PolicyReplanResult:
+        started = time.perf_counter()
+        if self._policy_cuda_stream is None:
+            policy_action, policy_metadata = self.policy.get_action(
+                request.observation,
+                previous_action=request.rtc_seed if request.options is not None else None,
+                options=request.options,
+            )
+        else:
+            assert self._policy_torch is not None
+            with self._policy_torch.cuda.stream(self._policy_cuda_stream):
+                policy_action, policy_metadata = self.policy.get_action(
+                    request.observation,
+                    previous_action=request.rtc_seed if request.options is not None else None,
+                    options=request.options,
+                )
+            self._policy_cuda_stream.synchronize()
         inference_s = time.perf_counter() - started
-        unbatched = _unbatch_action(policy_action, self.modalities.action.keys)
-        frozen_steps = 0 if options is None else int(options["rtc_frozen_steps"])
-        self.action_chunk = _stored_rtc_action(
+        return PolicyReplanResult(
+            request=request,
+            policy_action=policy_action,
+            policy_metadata=policy_metadata,
+            inference_s=inference_s,
+        )
+
+    def _install_replan(self, result: PolicyReplanResult) -> bool:
+        request = result.request
+        unbatched = _unbatch_action(result.policy_action, self.modalities.action.keys)
+        frozen_steps = 0 if request.options is None else int(request.options["rtc_frozen_steps"])
+        action_chunk = _stored_rtc_action(
             policy_action=unbatched,
-            rtc_seed_action=rtc_seed,
+            rtc_seed_action=request.rtc_seed,
             action_keys=self.modalities.action.keys,
             frozen_steps=frozen_steps,
         )
-        self.seed_manager.push(self.action_chunk, start_s=timeline_s, frame_id=self.policy_step)
-        self.action_index = 0
+        horizon = min(value.shape[0] for value in action_chunk.values())
+        elapsed_steps = _elapsed_action_steps(
+            start_s=request.timeline_s,
+            current_s=float(self.sim_time),
+            action_dt_s=self.action_dt_s,
+        )
+        stale = elapsed_steps >= horizon
+        if not stale:
+            self.seed_manager.push(action_chunk, start_s=request.timeline_s, frame_id=request.policy_step)
+            self.action_chunk = action_chunk
+            self.action_index = elapsed_steps
         _append_jsonl(
             self.trace_path,
             {
                 "schema_version": "newton.groot_rtc.replan.v1",
                 "event": "replan",
-                "replan_index": self.replan_index,
-                "policy_step": self.policy_step,
-                "timeline_s": timeline_s,
-                "inference_s": inference_s,
-                "source": source_metadata,
-                "rtc": rtc_metadata,
-                "rtc_seed": seed_metadata,
-                "policy": policy_metadata,
-                "action": self.action_chunk,
+                "replan_index": request.replan_index,
+                "policy_step": request.policy_step,
+                "timeline_s": request.timeline_s,
+                "inference_s": result.inference_s,
+                "async_policy": self.async_policy,
+                "elapsed_steps_before_install": elapsed_steps,
+                "stale": stale,
+                "source": request.source_metadata,
+                "rtc": request.rtc_metadata,
+                "rtc_seed": request.seed_metadata,
+                "policy": result.policy_metadata,
+                "action": action_chunk,
             },
         )
         print(
-            f"[groot] replan={self.replan_index} step={self.policy_step} "
-            f"inference={inference_s:.3f}s image={self.image_source} state={self.state_source} "
-            f"rtc={rtc_metadata.get('reason')} overlap={rtc_metadata.get('overlap_steps', 0)}",
+            f"[groot] replan={request.replan_index} step={request.policy_step} "
+            f"inference={result.inference_s:.3f}s async={self.async_policy} "
+            f"install_index={elapsed_steps}/{horizon} stale={stale} "
+            f"image={self.image_source} state={self.state_source} "
+            f"rtc={request.rtc_metadata.get('reason')} "
+            f"overlap={request.rtc_metadata.get('overlap_steps', 0)}",
             flush=True,
         )
         self.replan_index += 1
+        return not stale
+
+    def _submit_replan(self) -> None:
+        request = self._prepare_replan()
+        if self._policy_executor is None:
+            self._install_replan(self._infer_replan(request))
+            return
+        self._replan_future = self._policy_executor.submit(self._infer_replan, request)
+        print(
+            f"[groot] submitted async replan={request.replan_index} "
+            f"step={request.policy_step} timeline={request.timeline_s:.3f}s",
+            flush=True,
+        )
+
+    def _consume_replan(self) -> bool:
+        future = self._replan_future
+        if future is None or not future.done():
+            return False
+        self._replan_future = None
+        return self._install_replan(future.result())
 
     def _policy_tick(self) -> None:
-        if self.action_chunk is None or self.action_index >= self.replan_horizon:
-            self._replan()
-        assert self.action_chunk is not None
-        timeline_s = self.policy_step * self.action_dt_s
+        self._consume_replan()
+        needs_replan = self.action_chunk is None or self.action_index >= self.replan_horizon
+        if needs_replan and self._replan_future is None:
+            self._submit_replan()
+        if self.action_chunk is None:
+            return
+        action_horizon = min(value.shape[0] for value in self.action_chunk.values())
+        if self.action_index >= action_horizon:
+            return
+        timeline_s = float(self.sim_time)
         applied = self.controller.apply(self.action_chunk, self.action_index, timestamp_s=timeline_s)
         _append_jsonl(
             self.trace_path,
@@ -1751,10 +2116,22 @@ class GrootRtcExample(scene_runtime.Example):
             self.next_policy_time_s += self.action_dt_s
         super().step()
 
+    def render(self) -> None:
+        super().render()
+        if self.viewer_fifo_preview is not None:
+            self.viewer_fifo_preview.capture(self.viewer, self._model_input_preview_images)
+
     def close_policy_resources(self) -> None:
         if self._closed:
             return
         self._closed = True
+        if self._replan_future is not None:
+            self._replan_future.cancel()
+        if self._policy_executor is not None:
+            self._policy_executor.shutdown(wait=True, cancel_futures=True)
+            self._policy_executor = None
+        if self.viewer_fifo_preview is not None:
+            self.viewer_fifo_preview.close()
         self.smooth.close()
 
     def test_final(self) -> None:
@@ -1791,10 +2168,21 @@ def _add_policy_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--smooth-loop", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--image-source", choices=("sim", "smooth"), default="sim")
     parser.add_argument("--state-source", choices=("sim", "smooth"), default="sim")
-    parser.add_argument("--sim-ego-roi", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument(
+        "--sim-ego-roi",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Apply node0's 2x D455 ROI before the 320x180 frame-tap resize.",
+    )
     parser.add_argument("--groot-initial-hand-q", type=_vec10, default=GROOT_INITIAL_HAND_COMMAND_Q)
     parser.add_argument("--instruction", default="", help="Empty uses the selected smooth episode task.")
     parser.add_argument("--start-policy", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument(
+        "--async-policy",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Run GR00T inference on a dedicated CUDA worker so the viewer remains responsive.",
+    )
     parser.add_argument("--dry-run-policy", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--validate-only", action="store_true")
     parser.add_argument("--policy-device", default="cuda:0")
@@ -1834,20 +2222,31 @@ def _add_policy_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--trace-jsonl", type=Path, default=DEFAULT_TRACE_JSONL)
     parser.add_argument("--no-policy-trace", action="store_true")
     parser.add_argument("--dump-first-observation-dir", type=Path, default=None)
+    parser.add_argument(
+        "--viewer-fifo-preview",
+        type=Path,
+        default=None,
+        help="Write throttled RGB viewer frames to a host display FIFO.",
+    )
+    parser.add_argument("--viewer-fifo-preview-width", type=int, default=1600)
+    parser.add_argument("--viewer-fifo-preview-height", type=int, default=720)
+    parser.add_argument("--viewer-fifo-preview-fps", type=float, default=15.0)
+    parser.add_argument("--viewer-fifo-preview-input-width", type=int, default=320)
 
 
 def create_parser() -> argparse.ArgumentParser:
     parser = scene_runtime.Example.create_parser()
     parser.description = __doc__
     parser.set_defaults(
-        capture_graph=False,
+        capture_graph=True,
         quest_teleop=False,
         d455_preview=True,
         d405_preview=True,
         d455_opencv_window=False,
         d405_opencv_window=False,
-        d455_render_width=320,
-        d455_render_height=180,
+        camera_preview_fps=15.0,
+        d455_render_width=NODE0_EGO_SOURCE_WIDTH,
+        d455_render_height=NODE0_EGO_SOURCE_HEIGHT,
         d405_width=640,
         d405_height=480,
         initial_right_arm_q=GROOT_INITIAL_RIGHT_ARM_Q,
@@ -1889,9 +2288,6 @@ def main() -> None:
         _validate_only(preliminary_args)
         return
     viewer, args = newton.examples.init(parser)
-    if args.capture_graph:
-        print("[groot] disabling CUDA graph capture so policy drive targets can update", flush=True)
-        args.capture_graph = False
     newton.examples.run(GrootRtcExample(viewer, args), args)
 
 

@@ -1489,6 +1489,8 @@ class Example:
         self.d455_opencv_window = bool(args.d455_opencv_window)
         self.d405_preview_scale = int(args.d405_preview_scale)
         self.d405_opencv_window = bool(args.d405_opencv_window)
+        self.camera_preview_fps = max(0.0, float(args.camera_preview_fps))
+        self._next_camera_preview_time_s = 0.0
         self.d455_front_clearance = float(args.d455_front_clearance)
         self.d405_front_clearance = float(args.d405_front_clearance)
         self._d455_preview_started = False
@@ -1939,6 +1941,7 @@ class Example:
         if self.model.particle_count:
             self.model.bvh_refit_particles(self.state_0)
         self.sim_time = 0.0
+        self._next_camera_preview_time_s = 0.0
         self._skip_next_step_after_reset = True
 
         if self.teleop_robot is not None and hasattr(self.teleop_robot, "reset_to_scene_state"):
@@ -2424,7 +2427,13 @@ class Example:
             self.direct_gpu_xr_bridge = None
 
     def render(self) -> None:
-        self.render_camera_previews()
+        if (
+            self.camera_preview_fps <= 0.0
+            or self.sim_time + 1.0e-9 >= self._next_camera_preview_time_s
+        ):
+            self.render_camera_previews()
+            if self.camera_preview_fps > 0.0:
+                self._next_camera_preview_time_s = self.sim_time + 1.0 / self.camera_preview_fps
         self._log_l10_bottle_contacts()
 
         self.viewer.begin_frame(self.sim_time)
@@ -3699,6 +3708,12 @@ class Example:
             action=argparse.BooleanOptionalAction,
             default=True,
             help="Enable texture sampling in Newton camera previews.",
+        )
+        parser.add_argument(
+            "--camera-preview-fps",
+            type=float,
+            default=0.0,
+            help="Maximum GPU camera-preview update rate [Hz]. Zero updates every viewer frame.",
         )
         parser.add_argument(
             "--d455-image-size",

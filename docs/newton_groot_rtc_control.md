@@ -51,12 +51,22 @@ python tools/run_newton_groot_rtc_control.py \
   --start-policy
 ```
 
-The simulator defaults match node0's live policy inputs: raw `320x180`
-`ego_view` RGB and raw `640x480` `wrist_view` RGB. The runner does not crop,
-resize, pad, or letterbox either image before the checkpoint processor. Use
-`--sim-ego-roi` only for the older 2x scene-camera crop during framing
-diagnostics. Smooth images are always passed through unchanged, and the
-checkpoint processor performs its own resize and crop.
+The simulator defaults mirror node0's live camera path. D455 renders at
+`1280x800`, applies the same `2.0x` ROI centered at `(0.50, 0.65)`, resizes the
+crop back to the source size, and then performs the frame-tap resize to the
+`320x180` RGB `ego_view` received by the policy. The raw `640x480` RGB D405
+image becomes `wrist_view` without an extra crop or rotation. Use
+`--no-sim-ego-roi` only to diagnose the uncropped D455 view. Smooth images are
+passed through unchanged because they are already stored policy observations;
+the checkpoint processor performs its own subsequent model resize and crop.
+
+The node0 guarded full-stack entrypoint currently defaults to the later
+`checkpoint-400000` low-latency profile. Newton deliberately keeps its local
+`checkpoint-200000` unless a different checkpoint is selected explicitly.
+The two profiles share the same model-input contract: RGB HWC images after the
+camera processing above, SDK/CAN flange state in `policy_state`, row-major
+first-two-row `rot6d`, and decoded EEF commands transformed as
+`A * T_policy * B`.
 
 ## Smooth episode images
 
@@ -84,6 +94,13 @@ Defaults match the validated L10 deployment settings: 10 Hz actions, replan
 every 8 executed actions, at most 24 overlap steps, 4 frozen steps, and an RTC
 ramp rate of 3.0. Use `--no-rtc` for ordinary chunk replanning. Use
 `--dry-run-policy` to test the Newton control loop without loading the model.
+
+GR00T replanning runs asynchronously by default on a dedicated PyTorch CUDA
+stream. Newton keeps simulating and rendering while inference is in flight,
+continues the current action chunk, and skips action rows that have already
+expired when the new chunk arrives. Newton physics uses CUDA Graphs, and the
+GPU ray-traced D455/D405 previews update at 15 Hz. Use `--no-async-policy`,
+`--no-capture-graph`, or `--camera-preview-fps 0` only for diagnostics.
 
 The default `--arm-control-mode eef_ik` treats decoded `eef_9d` as an absolute
 target in the checkpoint's policy-state frame. It uses node0's fixed
@@ -160,9 +177,31 @@ NEWTON_GROOT_GPU=0 docker/run_groot_rtc.sh \
   --start-policy
 ```
 
-For `--viewer gl`, run from the node3 desktop terminal so its current
-`DISPLAY` and `.Xauthority` are available. The wrapper forwards both into the
-container; do not hard-code a display number unless that X socket exists.
+The wrapper defaults to the teleoperation stack's direct-GPU rendering path.
+Newton creates a headless NVIDIA EGL context, keeps physics, camera rendering,
+and GR00T inference on the selected GPU, and limits the simulation render loop
+to 60 Hz. A throttled `1600x720` composite is copied at 15 Hz to a host
+GStreamer window. The `1280x720` left region shows the simulator; the upper
+right region shows the exact `ego_view` frame in the current model
+observation, and the lower right region shows the exact `wrist_view` frame.
+The input panels are display-only and do not alter the arrays sent to the
+checkpoint. This keeps the current inference visible without making the XRDP
+X server render the Newton OpenGL scene. Set
+`NEWTON_GROOT_PREVIEW_WIDTH`, `NEWTON_GROOT_PREVIEW_HEIGHT`,
+`NEWTON_GROOT_PREVIEW_FPS`, `NEWTON_GROOT_INPUT_PREVIEW_WIDTH`, or
+`NEWTON_GROOT_RENDER_FPS` to tune these limits.
+
+Run from the node3 desktop terminal so its current `DISPLAY` and `.Xauthority`
+are available. Do not hard-code a display number unless that X socket exists.
+The full interactive GLX viewer remains available as a diagnostic fallback:
+
+```bash
+NEWTON_GROOT_RENDER_MODE=window NEWTON_GROOT_GPU=0 \
+  docker/run_groot_rtc.sh --viewer gl --image-source sim --state-source sim
+```
+
+The fallback can be much slower on XRDP because CUDA/OpenGL interoperability
+is unavailable there and every GL buffer must be copied.
 
 Run a recorded episode without opening a viewer:
 
