@@ -9,6 +9,21 @@ cd ~/project/newton
 NEWTON_VR_GPU=0 DISPLAY=:1 docker/run_vr_stack.sh --vr-output-mode direct-gpu
 ```
 
+## GR00T 模型推理
+
+在 Docker 中使用 GPU0 启动 Newton 仿真和 GR00T RTC 推理：
+
+```bash
+cd ~/project/newton
+NEWTON_GROOT_GPU=0 docker/run_groot_rtc.sh \
+  --viewer gl \
+  --image-source sim \
+  --state-source sim \
+  --start-policy
+```
+
+该命令使用仿真实时图像和仿真状态作为模型输入，并在场景启动后立即开始策略推理。更多参数见 [Newton GR00T RTC control](docs/newton_groot_rtc_control.md)。
+
 ## 非 Docker 启动
 
 需要在 `newton` conda 环境中启动：
