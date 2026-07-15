@@ -51,6 +51,7 @@ Newton Physics
    FAQ <faq>
    Migration Guide <migration>
    Integrations <integrations/index>
+   GR00T RL Environment <newton_groot_rl_env>
 
 
 .. toctree::

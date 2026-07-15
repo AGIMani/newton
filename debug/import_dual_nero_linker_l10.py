@@ -1592,6 +1592,7 @@ class Example:
         self.update_step_interval = 1
         self.graph = None
         self.simulate_enabled = args.simulate
+        self.gpu_env_mode = bool(getattr(args, "gpu_env_mode", False))
         self.scene_pos = [args.scene_pos_x, args.scene_pos_y, args.scene_pos_z]
         self.scene_rpy_deg = [args.scene_roll, args.scene_pitch, args.scene_yaw]
         self.scene_scale = [args.scene_scale, args.scene_scale, args.scene_scale]
@@ -1980,13 +1981,17 @@ class Example:
         )
         self.viewer_contacts_enabled = bool(args.viewer_contacts)
         self.viewer_hydro_contact_surface_enabled = bool(args.viewer_hydro_contact_surface)
-        self._shape_body_host = self.model.shape_body.numpy().copy()
-        self._l10_shape_indices = frozenset(
-            shape_index
-            for shape_index, body_index in enumerate(self._shape_body_host)
-            if 0 <= int(body_index) < len(self.model.body_label)
-            and _is_l10_hand_body_label(self.model.body_label[int(body_index)])
-        )
+        if self.gpu_env_mode:
+            self._shape_body_host = np.empty(0, dtype=np.int32)
+            self._l10_shape_indices = frozenset()
+        else:
+            self._shape_body_host = self.model.shape_body.numpy().copy()
+            self._l10_shape_indices = frozenset(
+                shape_index
+                for shape_index, body_index in enumerate(self._shape_body_host)
+                if 0 <= int(body_index) < len(self.model.body_label)
+                and _is_l10_hand_body_label(self.model.body_label[int(body_index)])
+            )
         self._dynamic_bottle_collision_shape = (
             int(self.dynamic_bottle_handles["collision_shape"]) if self.dynamic_bottle_handles is not None else -1
         )
@@ -1996,8 +2001,9 @@ class Example:
         self._open_l10_bottle_contact_log()
 
         newton.eval_fk(self.model, self.model.joint_q, self.model.joint_qd, self.state_0)
-        _assert_finite_state(self.state_0, "Initial FK")
-        self._capture_initial_state_snapshot()
+        if not self.gpu_env_mode:
+            _assert_finite_state(self.state_0, "Initial FK")
+            self._capture_initial_state_snapshot()
         _print_model_summary(self.model)
 
         self.viewer.set_model(self.model)

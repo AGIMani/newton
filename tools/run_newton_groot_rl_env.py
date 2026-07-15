@@ -19,7 +19,17 @@ def create_parser() -> argparse.ArgumentParser:
     parser.add_argument("--control-hz", type=int, default=10)
     parser.add_argument("--simulation-hz", type=int, default=60)
     parser.add_argument("--substeps-per-frame", type=int, default=16)
-    parser.add_argument("--max-episode-steps", type=int, default=0)
+    parser.add_argument("--max-episode-steps", type=int, default=100)
+    parser.add_argument(
+        "--obs-mode", choices=("state", "state_dict", "rgb", "state_dict+rgb", "policy"), default="state_dict+rgb"
+    )
+    parser.add_argument("--control-mode", choices=("pd_joint_pos", "pd_joint_delta_pos"), default="pd_joint_delta_pos")
+    parser.add_argument(
+        "--reward-mode", choices=("none", "sparse", "dense", "normalized_dense"), default="normalized_dense"
+    )
+    parser.add_argument("--arm-action-delta", type=float, default=0.1)
+    parser.add_argument("--hand-action-delta", type=float, default=0.1)
+    parser.add_argument("--bottle-lift-height", type=float, default=0.1)
     parser.add_argument("--ego-width", type=int, default=320)
     parser.add_argument("--ego-height", type=int, default=180)
     parser.add_argument("--wrist-width", type=int, default=640)
@@ -44,6 +54,12 @@ def main() -> None:
         simulation_hz=args.simulation_hz,
         substeps_per_frame=args.substeps_per_frame,
         max_episode_steps=args.max_episode_steps,
+        obs_mode=args.obs_mode,
+        control_mode=args.control_mode,
+        reward_mode=args.reward_mode,
+        arm_action_delta=args.arm_action_delta,
+        hand_action_delta=args.hand_action_delta,
+        bottle_lift_height=args.bottle_lift_height,
         capture_graph=not args.no_capture_graph,
         render_images=not args.no_images,
         camera_textures=not args.no_camera_textures,
@@ -68,14 +84,17 @@ def main() -> None:
         wp.synchronize_device(env.device)
         elapsed = time.perf_counter() - start
         steps_per_second = float(args.steps) / elapsed if elapsed > 0.0 else 0.0
-        shapes = {
-            group: {name: tuple(value.shape) for name, value in values.items()} for group, values in observation.items()
-        }
+
+        def shapes(value):
+            if isinstance(value, dict):
+                return {key: shapes(child) for key, child in value.items()}
+            return tuple(value.shape)
+
         print(
             f"Completed {args.steps} batched steps across {args.num_envs} worlds "
             f"in {elapsed:.3f}s ({steps_per_second:.2f} env.step calls/s)."
         )
-        print(f"GPU observation shapes: {shapes}")
+        print(f"GPU observation shapes: {shapes(observation)}")
     finally:
         env.close()
 
