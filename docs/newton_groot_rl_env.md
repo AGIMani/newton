@@ -160,6 +160,7 @@ conda_envs/newton/bin/python tools/train_newton_groot_diffusion_policy.py \
   --output-dir checkpoints/dp/groot_l10_pick \
   --batch-size 32 \
   --num-workers 4 \
+  --validation-workers 2 \
   --validation-fraction 0.1 \
   --split-seed 0 \
   --validate-every 5000 \

@@ -25,6 +25,7 @@ def create_parser() -> argparse.ArgumentParser:
     parser.add_argument("--steps", type=int, default=100_000)
     parser.add_argument("--batch-size", type=int, default=32)
     parser.add_argument("--num-workers", type=int, default=4)
+    parser.add_argument("--validation-workers", type=int, default=2)
     parser.add_argument("--learning-rate", type=float, default=1.0e-4)
     parser.add_argument("--weight-decay", type=float, default=1.0e-6)
     parser.add_argument("--obs-horizon", type=int, default=2)
@@ -95,6 +96,8 @@ def main() -> None:
 
     if not torch.cuda.is_available() or not str(args.device).startswith("cuda"):
         raise RuntimeError("This trainer is GPU-first and requires a CUDA device")
+    if args.num_workers < 0 or args.validation_workers < 0:
+        raise ValueError("num_workers and validation_workers must be non-negative")
     if args.validate_every < 1 or args.validation_batches < 0:
         raise ValueError("validate_every must be positive and validation_batches must be non-negative")
     torch.manual_seed(args.seed)
@@ -131,11 +134,11 @@ def main() -> None:
         validation_dataset,
         batch_size=args.batch_size,
         shuffle=False,
-        num_workers=args.num_workers,
+        num_workers=args.validation_workers,
         pin_memory=True,
         drop_last=False,
-        persistent_workers=args.num_workers > 0,
-        prefetch_factor=2 if args.num_workers > 0 else None,
+        persistent_workers=False,
+        prefetch_factor=2 if args.validation_workers > 0 else None,
     )
     config = GrootDiffusionPolicyConfig(obs_horizon=args.obs_horizon, pred_horizon=args.pred_horizon)
     model = GrootDiffusionPolicy(
