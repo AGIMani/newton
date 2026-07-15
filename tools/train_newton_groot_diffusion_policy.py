@@ -49,6 +49,14 @@ def _to_device(batch: dict[str, Any], device: Any) -> dict[str, Any]:
     return {key: value.to(device=device, non_blocking=True) for key, value in batch.items()}
 
 
+def _initialize_data_worker(_worker_id: int) -> None:
+    import cv2  # noqa: PLC0415
+    import torch
+
+    cv2.setNumThreads(1)
+    torch.set_num_threads(1)
+
+
 def _checkpoint_payload(
     model: Any,
     optimizer: Any | None,
@@ -157,6 +165,8 @@ def main() -> None:
         drop_last=True,
         persistent_workers=args.num_workers > 0,
         prefetch_factor=args.prefetch_factor if args.num_workers > 0 else None,
+        worker_init_fn=_initialize_data_worker if args.num_workers > 0 else None,
+        multiprocessing_context="spawn" if args.num_workers > 0 else None,
     )
     validation_loader = torch.utils.data.DataLoader(
         validation_dataset,
@@ -167,6 +177,8 @@ def main() -> None:
         drop_last=False,
         persistent_workers=False,
         prefetch_factor=args.prefetch_factor if args.validation_workers > 0 else None,
+        worker_init_fn=_initialize_data_worker if args.validation_workers > 0 else None,
+        multiprocessing_context="spawn" if args.validation_workers > 0 else None,
     )
     config = GrootDiffusionPolicyConfig(obs_horizon=args.obs_horizon, pred_horizon=args.pred_horizon)
     model = GrootDiffusionPolicy(
