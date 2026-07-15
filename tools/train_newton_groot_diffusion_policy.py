@@ -26,6 +26,9 @@ def create_parser() -> argparse.ArgumentParser:
     parser.add_argument("--batch-size", type=int, default=32)
     parser.add_argument("--num-workers", type=int, default=4)
     parser.add_argument("--validation-workers", type=int, default=2)
+    parser.add_argument("--video-cache-size", type=int, default=8)
+    parser.add_argument("--video-decode-threads", type=int, default=1)
+    parser.add_argument("--prefetch-factor", type=int, default=1)
     parser.add_argument("--learning-rate", type=float, default=1.0e-4)
     parser.add_argument("--weight-decay", type=float, default=1.0e-6)
     parser.add_argument("--obs-horizon", type=int, default=2)
@@ -48,21 +51,40 @@ def _to_device(batch: dict[str, Any], device: Any) -> dict[str, Any]:
 
 def _checkpoint_payload(
     model: Any,
-    optimizer: Any,
+    optimizer: Any | None,
     step: int,
     config: Any,
     dataset_split: Any,
     best_validation_loss: float,
 ) -> dict[str, Any]:
-    return {
+    payload = {
         "format": "teleop_stack.groot_l10_diffusion_policy.v1",
         "step": int(step),
         "config": asdict(config),
         "dataset_split": asdict(dataset_split),
         "best_validation_loss": float(best_validation_loss),
         "model": model.state_dict(),
-        "optimizer": optimizer.state_dict(),
     }
+    if optimizer is not None:
+        payload["optimizer"] = optimizer.state_dict()
+    return payload
+
+
+def _save_checkpoint(payload: dict[str, Any], path: Path) -> None:
+    import torch
+
+    temporary_path = path.with_suffix(f"{path.suffix}.tmp")
+    print(f"saving_checkpoint={path}", flush=True)
+    torch.save(payload, temporary_path)
+    temporary_path.replace(path)
+    print(f"saved_checkpoint={path}", flush=True)
+
+
+def _shutdown_loader(loader: Any) -> None:
+    iterator = getattr(loader, "_iterator", None)
+    shutdown = getattr(iterator, "_shutdown_workers", None)
+    if callable(shutdown):
+        shutdown()
 
 
 def _validate(model: Any, loader: Any, scheduler: Any, device: Any, *, seed: int, max_batches: int) -> float:
@@ -98,6 +120,8 @@ def main() -> None:
         raise RuntimeError("This trainer is GPU-first and requires a CUDA device")
     if args.num_workers < 0 or args.validation_workers < 0:
         raise ValueError("num_workers and validation_workers must be non-negative")
+    if args.prefetch_factor < 1:
+        raise ValueError("prefetch_factor must be positive")
     if args.validate_every < 1 or args.validation_batches < 0:
         raise ValueError("validate_every must be positive and validation_batches must be non-negative")
     torch.manual_seed(args.seed)
@@ -112,6 +136,8 @@ def main() -> None:
         obs_horizon=args.obs_horizon,
         pred_horizon=args.pred_horizon,
         episode_indices=dataset_split.train_episode_indices,
+        video_cache_size=args.video_cache_size,
+        video_decode_threads=args.video_decode_threads,
     )
     validation_dataset = GrootLeRobotWindowDataset(
         args.dataset,
@@ -119,6 +145,8 @@ def main() -> None:
         pred_horizon=args.pred_horizon,
         episode_indices=dataset_split.validation_episode_indices,
         stats=train_dataset.stats,
+        video_cache_size=args.video_cache_size,
+        video_decode_threads=args.video_decode_threads,
     )
     train_loader = torch.utils.data.DataLoader(
         train_dataset,
@@ -128,7 +156,7 @@ def main() -> None:
         pin_memory=True,
         drop_last=True,
         persistent_workers=args.num_workers > 0,
-        prefetch_factor=2 if args.num_workers > 0 else None,
+        prefetch_factor=args.prefetch_factor if args.num_workers > 0 else None,
     )
     validation_loader = torch.utils.data.DataLoader(
         validation_dataset,
@@ -138,7 +166,7 @@ def main() -> None:
         pin_memory=True,
         drop_last=False,
         persistent_workers=False,
-        prefetch_factor=2 if args.validation_workers > 0 else None,
+        prefetch_factor=args.prefetch_factor if args.validation_workers > 0 else None,
     )
     config = GrootDiffusionPolicyConfig(obs_horizon=args.obs_horizon, pred_horizon=args.pred_horizon)
     model = GrootDiffusionPolicy(
@@ -161,6 +189,8 @@ def main() -> None:
         checkpoint = torch.load(args.resume, map_location=device, weights_only=False)
         if checkpoint.get("dataset_split") != asdict(dataset_split):
             raise ValueError("Resume checkpoint dataset split does not match the current dataset metadata and options")
+        if "optimizer" not in checkpoint:
+            raise ValueError("Resume checkpoint does not contain optimizer state; use a numbered training checkpoint")
         model.load_state_dict(checkpoint["model"])
         optimizer.load_state_dict(checkpoint["optimizer"])
         start_step = int(checkpoint["step"])
@@ -222,10 +252,10 @@ def main() -> None:
                 print(f"step={step} validation_loss={validation_loss:.6f}", flush=True)
                 if validation_loss < best_validation_loss:
                     best_validation_loss = validation_loss
-                    torch.save(
+                    _save_checkpoint(
                         _checkpoint_payload(
                             checkpoint_model,
-                            optimizer,
+                            None,
                             step,
                             config,
                             dataset_split,
@@ -235,7 +265,7 @@ def main() -> None:
                     )
             if step % args.save_every == 0 or step == args.steps:
                 checkpoint_path = args.output_dir / f"checkpoint_{step:08d}.pt"
-                torch.save(
+                _save_checkpoint(
                     _checkpoint_payload(
                         checkpoint_model,
                         optimizer,
@@ -247,6 +277,8 @@ def main() -> None:
                     checkpoint_path,
                 )
     finally:
+        _shutdown_loader(train_loader)
+        _shutdown_loader(validation_loader)
         train_dataset.close()
         validation_dataset.close()
 

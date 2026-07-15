@@ -145,7 +145,8 @@ sample = train_dataset[0]
 - action：从当前帧开始的未来 16 个绝对动作，episode 末尾使用最后动作 padding；
 - `action_is_pad`：使 diffusion loss 忽略末尾 padding；
 - 数值数据：启动时读取所选 episode 的全部状态和动作，体积相对视频很小；
-- 视频：保持 H.264 压缩，由 DataLoader worker 解码，并通过 pinned memory/non-blocking copy 送入 GPU。
+- 视频：保持 H.264 压缩，由 DataLoader worker 解码，并通过 pinned memory/non-blocking copy 送入 GPU；
+- 每个 worker 默认最多缓存 8 个 `VideoCapture`，且每个 FFmpeg decoder 只使用 1 个线程，避免多日期数据随机采样时耗尽主机线程和文件句柄。
 
 BC split 会先排除 `success != true` 或 `outcome != "success"` 的轨迹，再按
 `raw_episode_id + source_start_frame + source_end_frame` 删除精确重复 clip。不同范围的 clip 会保留，
@@ -161,6 +162,9 @@ conda_envs/newton/bin/python tools/train_newton_groot_diffusion_policy.py \
   --batch-size 32 \
   --num-workers 4 \
   --validation-workers 2 \
+  --video-cache-size 8 \
+  --video-decode-threads 1 \
+  --prefetch-factor 1 \
   --validation-fraction 0.1 \
   --split-seed 0 \
   --validate-every 5000 \
@@ -168,8 +172,8 @@ conda_envs/newton/bin/python tools/train_newton_groot_diffusion_policy.py \
 ```
 
 网络包含两个独立 camera encoder、一个 26 维 state encoder 和一个预测 16×19 action noise 的 temporal denoiser。训练、归一化、augmentation 后的 resize、noise scheduler 和 loss 都在 GPU。
-训练目录会写入可审计的 `dataset_split.json`，定期保存 step checkpoint，并把 validation loss 最低的模型保存为
-`best.pt`。归一化统计只从 train split 计算，validation 复用 train 统计。
+训练目录会写入可审计的 `dataset_split.json`，定期保存可恢复训练的 step checkpoint，并把 validation loss
+最低的纯模型权重保存为推理用 `best.pt`。归一化统计只从 train split 计算，validation 复用 train 统计。
 
 运行 checkpoint：
 

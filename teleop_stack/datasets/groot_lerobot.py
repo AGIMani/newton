@@ -8,7 +8,7 @@ from __future__ import annotations
 import hashlib
 import json
 import random
-from collections import defaultdict
+from collections import OrderedDict, defaultdict
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -178,13 +178,19 @@ class GrootLeRobotWindowDataset:
         preprocess_ego: bool = True,
         episode_indices: Sequence[int] | None = None,
         stats: GrootWindowDatasetStats | None = None,
+        video_cache_size: int = 8,
+        video_decode_threads: int = 1,
     ) -> None:
         if obs_horizon < 1 or pred_horizon < 1:
             raise ValueError("obs_horizon and pred_horizon must be positive")
+        if video_cache_size < 1 or video_decode_threads < 1:
+            raise ValueError("video_cache_size and video_decode_threads must be positive")
         self.root = Path(root).expanduser().resolve()
         self.obs_horizon = int(obs_horizon)
         self.pred_horizon = int(pred_horizon)
         self.preprocess_ego = bool(preprocess_ego)
+        self.video_cache_size = int(video_cache_size)
+        self.video_decode_threads = int(video_decode_threads)
         self.info = self._load_json(self.root / "meta" / "info.json")
         self._validate_metadata()
         self.all_episodes, self.episodes_sha256 = _load_episode_metadata(self.root, int(self.info["total_episodes"]))
@@ -208,7 +214,7 @@ class GrootLeRobotWindowDataset:
         ]
         self.stats = stats if stats is not None else self._compute_stats()
         self._validate_stats()
-        self._captures: dict[tuple[int, str], Any] = {}
+        self._captures: OrderedDict[tuple[int, str], Any] = OrderedDict()
 
     @staticmethod
     def _load_json(path: Path) -> dict[str, Any]:
@@ -292,13 +298,24 @@ class GrootLeRobotWindowDataset:
     def _capture(self, episode_index: int, key: str) -> Any:
         cache_key = (episode_index, key)
         if cache_key in self._captures:
+            self._captures.move_to_end(cache_key)
             return self._captures[cache_key]
         import cv2  # noqa: PLC0415
 
         path = self._video_path(episode_index, key)
-        capture = cv2.VideoCapture(str(path))
+        if hasattr(cv2, "CAP_PROP_N_THREADS"):
+            capture = cv2.VideoCapture(
+                str(path),
+                cv2.CAP_FFMPEG,
+                [cv2.CAP_PROP_N_THREADS, self.video_decode_threads],
+            )
+        else:
+            capture = cv2.VideoCapture(str(path))
         if not capture.isOpened():
             raise RuntimeError(f"Failed to open video: {path}")
+        while len(self._captures) >= self.video_cache_size:
+            _, evicted = self._captures.popitem(last=False)
+            evicted.release()
         self._captures[cache_key] = capture
         return capture
 
@@ -348,7 +365,7 @@ class GrootLeRobotWindowDataset:
 
     def __getstate__(self) -> dict[str, Any]:
         state = self.__dict__.copy()
-        state["_captures"] = {}
+        state["_captures"] = OrderedDict()
         return state
 
     def __del__(self) -> None:
