@@ -95,3 +95,5 @@ docs/_static/viser/
 /checkpoints/nvidia/Cosmos-Reason2-2B/
 /local_data/groot/smooth
 /logs/groot_newton_rtc/
+
+/reports/

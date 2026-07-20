@@ -16,6 +16,7 @@
 - Add `SensorTiledCamera.utils.assign_checkerboard_material(shape_indices=...)` for applying the checkerboard texture to selected shapes.
 - Add a GPU-batched Nero + L10 PickBottle environment and dual-camera Diffusion Policy trainer using the existing 26-D LeRobot state, 19-D absolute EEF/hand action, CUDA IK, partial reset, and action-chunk interfaces.
 - Add a residual PPO trainer that freezes the Nero + L10 Diffusion Policy, learns bounded position/SO(3)/hand corrections from staged rewards, and uses GPU privileged task state only in the critic.
+- Add deterministic multi-episode evaluation and representative or episode-matched dual-camera rollout videos for comparing frozen Nero + L10 Diffusion Policy against residual PPO.
 - Add optional per-coordinate thumb residual scales to Nero + L10 residual PPO, checkpoint the effective 10-joint GPU scale vector, and report thumb saturation, bound-clamp, and dynamic-rate-limit diagnostics.
 - Add `--render-fps` to cap example rendering rate without changing simulation frame timing
 - Expose `MeshAdjacencyData` (the device-resident soft-mesh adjacency struct returned by `MeshAdjacency.to()`) as public API for use in custom Warp kernels

@@ -37,6 +37,7 @@ _TRAINING_CONTRACT_VERSION = 9
 _REWARD_CONTRACT_VERSION = 13
 _BASE_ACTION_MODE = "per_lane_cached_rows_0_7"
 _BASE_ACTION_HORIZON = 8
+_RESIDUAL_ACTION_DIM = 16
 _ACTOR_CONDITION_SOURCE = "chunk_plan_plus_live_state_delta_finger_load_and_row"
 _CRITIC_PRIVILEGED_SOURCE = "task_state_plus_reward_v13_r0_cN_cT_GN_GT"
 _RESET_CACHE_POLICY = "invalidate_selected_lanes"
@@ -1557,17 +1558,46 @@ def _evaluate(
     args: argparse.Namespace,
     *,
     episodes: int,
+    apply_residual: bool = True,
+    episode_initial_noise: Any | None = None,
+    wave_generator_states: list[Any] | None = None,
+    episode_records: list[dict[str, Any]] | None = None,
+    step_callback: Any | None = None,
 ) -> tuple[dict[str, float], Any, dict[str, Any]]:
     import torch
 
     eval_generator = torch.Generator(device=args.device)
     eval_generator.manual_seed(args.seed + 10_003)
-    initial_noise = torch.randn(
-        (args.num_envs, frozen_dp.config.pred_horizon, frozen_dp.config.action_dim),
-        dtype=torch.float32,
-        device=args.device,
-        generator=eval_generator,
-    )
+    expected_noise_tail = (frozen_dp.config.pred_horizon, frozen_dp.config.action_dim)
+    if episode_initial_noise is None:
+        fixed_initial_noise = torch.randn(
+            (args.num_envs, *expected_noise_tail),
+            dtype=torch.float32,
+            device=args.device,
+            generator=eval_generator,
+        )
+    else:
+        if not hasattr(episode_initial_noise, "shape") or not hasattr(episode_initial_noise, "device"):
+            raise TypeError("episode_initial_noise must be a tensor")
+        if episode_initial_noise.shape != (episodes, *expected_noise_tail):
+            raise ValueError(
+                "episode_initial_noise must have shape "
+                f"({episodes}, {expected_noise_tail[0]}, {expected_noise_tail[1]}), "
+                f"got {tuple(episode_initial_noise.shape)}"
+            )
+        expected_device = torch.device(args.device)
+        if expected_device.type == "cuda" and expected_device.index is None:
+            expected_device = torch.device("cuda", torch.cuda.current_device())
+        if episode_initial_noise.device != expected_device:
+            raise ValueError(f"episode_initial_noise must be on {expected_device}, got {episode_initial_noise.device}")
+        if not episode_initial_noise.is_floating_point():
+            raise ValueError("episode_initial_noise must use a floating-point dtype")
+        fixed_initial_noise = None
+    expected_wave_count = math.ceil(episodes / args.num_envs)
+    if wave_generator_states is not None and len(wave_generator_states) != expected_wave_count:
+        raise ValueError(
+            f"wave_generator_states must contain {expected_wave_count} states, got {len(wave_generator_states)}"
+        )
     quota = _EvaluationQuota(episodes, args.num_envs, args.device)
     success_count = 0
     fail_count = 0
@@ -1647,13 +1677,36 @@ def _evaluate(
     }
     contact_and_grasp_step_count = torch.zeros((), dtype=torch.int64, device=args.device)
     cache = _PerLaneActionChunkCache(args.num_envs, frozen_dp.config.action_dim, args.device)
-    was_training = actor_critic.training
-    actor_critic.eval()
+    if apply_residual and actor_critic is None:
+        raise ValueError("actor_critic is required when apply_residual=True")
+    was_training = actor_critic.training if apply_residual else None
+    if apply_residual:
+        actor_critic.eval()
     try:
         while not quota.complete:
             observation, current_info = env.reset()
             cache.invalidate()
-            quota.start_wave()
+            episode_start = quota.completed
+            wave_active = quota.start_wave()
+            wave_lanes = torch.where(wave_active)[0]
+            wave_episode_ids = torch.full((args.num_envs,), -1, dtype=torch.long, device=args.device)
+            wave_episode_ids[wave_lanes] = torch.arange(
+                episode_start,
+                episode_start + wave_lanes.numel(),
+                dtype=torch.long,
+                device=args.device,
+            )
+            if episode_initial_noise is None:
+                initial_noise = fixed_initial_noise
+            else:
+                initial_noise = torch.zeros(
+                    (args.num_envs, *expected_noise_tail),
+                    dtype=episode_initial_noise.dtype,
+                    device=args.device,
+                )
+                initial_noise[wave_lanes] = episode_initial_noise[wave_episode_ids[wave_lanes]]
+            if wave_generator_states is not None:
+                eval_generator.set_state(wave_generator_states[quota.wave - 1].cpu())
             wave_event_ever = {
                 name: torch.zeros(args.num_envs, dtype=torch.bool, device=args.device) for name in _EVENT_INFO_KEYS
             }
@@ -1704,23 +1757,29 @@ def _evaluate(
                 )
                 privileged = _privileged_task_state(current_info, env.unwrapped.config)
                 with torch.no_grad():
-                    raw_latent, _, _, _ = actor_critic.act(
-                        prepared.policy_input,
-                        privileged,
-                        deterministic=True,
-                    )
-                    residual_action = compose_residual_action(
-                        prepared.base_action,
-                        raw_latent,
-                        action_min,
-                        action_max,
-                        position_scale_m=args.position_residual_scale_m,
-                        vertical_position_scale_m=args.vertical_residual_scale_m,
-                        rotation_scale_rad=math.radians(args.rotation_residual_scale_deg),
-                        hand_scale_normalized=hand_residual_scale,
-                        world_from_action_rotation=_R_WORLD_FROM_ACTION,
-                    )
-                    action = torch.where(active_before_step[:, None], residual_action, prepared.base_action)
+                    if apply_residual:
+                        raw_latent, _, _, _ = actor_critic.act(
+                            prepared.policy_input,
+                            privileged,
+                            deterministic=True,
+                        )
+                        residual_action = compose_residual_action(
+                            prepared.base_action,
+                            raw_latent,
+                            action_min,
+                            action_max,
+                            position_scale_m=args.position_residual_scale_m,
+                            vertical_position_scale_m=args.vertical_residual_scale_m,
+                            rotation_scale_rad=math.radians(args.rotation_residual_scale_deg),
+                            hand_scale_normalized=hand_residual_scale,
+                            world_from_action_rotation=_R_WORLD_FROM_ACTION,
+                        )
+                        action = torch.where(active_before_step[:, None], residual_action, prepared.base_action)
+                    else:
+                        raw_latent = prepared.base_action.new_zeros(
+                            (prepared.base_action.shape[0], _RESIDUAL_ACTION_DIM)
+                        )
+                        action = prepared.base_action
                     action_diagnostics = _action_diagnostics(
                         prepared.base_action,
                         raw_latent,
@@ -1737,6 +1796,19 @@ def _evaluate(
                 next_observation, _, terminated, truncated, step_info = env.step(action)
                 done = terminated | truncated
                 cache.advance(active_before_step, validate=False)
+                if step_callback is not None:
+                    step_callback(
+                        wave=quota.wave - 1,
+                        step=_wave_step,
+                        episode_ids=wave_episode_ids,
+                        active=active_before_step,
+                        observation=next_observation,
+                        info=step_info,
+                        done=done,
+                        base_action=prepared.base_action,
+                        action=action,
+                        row_index=prepared.row_index,
+                    )
                 eef_delta_action = next_observation[_STATE_KEY][:, -1, 7:10].float() - current_eef_position
                 actual_eef_delta_z = _action_position_to_world(eef_delta_action)[..., 2]
                 post_action_thumb, post_action_non_thumb, post_action_grasp = _finger_contact_topology(step_info)
@@ -1896,6 +1968,42 @@ def _evaluate(
                         partial_contact_stage_episode_counts[name] += int((value & accepted).sum())
                     for name, value in wave_reward_v13_positive_ever.items():
                         reward_v13_positive_episode_counts[name] += int((value & accepted).sum())
+                    if episode_records is not None:
+                        for lane in torch.where(accepted)[0].tolist():
+                            episode_records.append(
+                                {
+                                    "episode_id": int(wave_episode_ids[lane]),
+                                    "noise_index": (
+                                        int(wave_episode_ids[lane]) if episode_initial_noise is not None else int(lane)
+                                    ),
+                                    "wave": int(quota.wave - 1),
+                                    "lane": int(lane),
+                                    "return": float(episode["return"][lane]),
+                                    "length": int(episode["length"][lane]),
+                                    "success": bool(episode["success_once"][lane]),
+                                    "fail": bool(episode["fail_at_end"][lane]),
+                                    "max_contacted_carry_lift_height_m": float(
+                                        step_info["max_contacted_carry_lift_height"][lane]
+                                    ),
+                                    "max_physical_lift_height_m": float(step_info["physical_max_lift_height"][lane]),
+                                    "final_current_lift_height_m": float(step_info["current_lift_height"][lane]),
+                                    "final_xy_displacement_m": float(step_info["xy_displacement"][lane]),
+                                    "final_z_error_m": float(step_info["final_z_error"][lane]),
+                                    "final_orientation_error_rad": float(step_info["orientation_error"][lane]),
+                                    "terminal_phase": int(step_info["task_phase"][lane]),
+                                    **{
+                                        f"event_{name}_ever": bool(value[lane])
+                                        for name, value in wave_event_ever.items()
+                                    },
+                                    **{f"{name}_ever": bool(value[lane]) for name, value in wave_topology_ever.items()},
+                                    **{
+                                        f"finger_{finger_name}_contact_any_frame_ever": bool(
+                                            wave_any_frame_finger_ever[lane, finger_index]
+                                        )
+                                        for finger_index, finger_name in enumerate(_FINGER_NAMES)
+                                    },
+                                }
+                            )
                 base_discarded_rows += cache.remaining_rows(done).sum()
                 cache.invalidate(done)
                 if quota.wave_complete:
@@ -1909,7 +2017,8 @@ def _evaluate(
                     f"Evaluation wave {quota.wave} did not finish within {args.max_episode_steps} control steps"
                 )
     finally:
-        actor_critic.train(was_training)
+        if apply_residual:
+            actor_critic.train(was_training)
 
     episode_count = quota.completed
     if episode_count != episodes:
@@ -2089,7 +2198,7 @@ def main() -> None:
         state_delta_dim=dp_config.state_dim,
         finger_root_load_dim=_FINGER_ROOT_LOAD_DIM,
         privileged_dim=_PRIVILEGED_STATE_DIM,
-        residual_dim=16,
+        residual_dim=_RESIDUAL_ACTION_DIM,
         hidden_dim=args.hidden_dim,
         initial_log_std=args.initial_log_std,
     )

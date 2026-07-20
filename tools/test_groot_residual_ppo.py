@@ -165,11 +165,15 @@ class _FakeEvalDP:
         self.config = SimpleNamespace(pred_horizon=_BASE_ACTION_HORIZON, action_dim=19)
         self.state_min = torch.full((26,), -2.0)
         self.state_max = torch.full((26,), 2.0)
+        self.initial_noises: list[torch.Tensor] = []
 
     def encode_observation(self, observation):
         return torch.zeros(observation["lane"].shape[0], 4)
 
-    def predict_action_from_condition(self, condition, *_args, **_kwargs):
+    def predict_action_from_condition(self, condition, *_args, **kwargs):
+        initial_noise = kwargs.get("initial_noise")
+        if initial_noise is not None:
+            self.initial_noises.append(initial_noise.detach().clone())
         base = torch.zeros(condition.shape[0], 19)
         base[:, 3] = 1.0
         base[:, 7] = 1.0
@@ -179,6 +183,7 @@ class _FakeEvalDP:
 class _FakeEvalActor:
     def __init__(self) -> None:
         self.training = True
+        self.act_calls = 0
 
     def eval(self):
         self.training = False
@@ -189,6 +194,7 @@ class _FakeEvalActor:
         return self
 
     def act(self, policy_input, _privileged, **_kwargs):
+        self.act_calls += 1
         batch_size = policy_input.shape[0]
         raw_latent = torch.zeros(batch_size, 16)
         zeros = torch.zeros(batch_size)
@@ -213,6 +219,7 @@ class _FakeMultiLaneEvalEnv:
         self.returns = torch.zeros(self.num_envs)
         self.full_reset_count = 0
         self.partial_reset_masks: list[tuple[bool, ...]] = []
+        self.actions: list[torch.Tensor] = []
 
     def _observation(self):
         state = torch.zeros(self.num_envs, 2, 26)
@@ -310,7 +317,8 @@ class _FakeMultiLaneEvalEnv:
         self.returns[mask] = 0.0
         return self._observation(), self._info(torch.zeros(self.num_envs, dtype=torch.bool))
 
-    def step(self, _action):
+    def step(self, action):
+        self.actions.append(action.detach().clone())
         reward = torch.arange(1, self.num_envs + 1, dtype=torch.float32)
         self.steps += 1
         self.returns += reward
@@ -896,6 +904,7 @@ class TestGrootResidualPPO(unittest.TestCase):
                 episodes=episodes,
             )
             self.assertTrue(actor.training)
+            self.assertGreater(actor.act_calls, 0)
             return metrics, env
 
         metrics, env = evaluate((1, 3, 4), episodes=5)
@@ -973,6 +982,183 @@ class TestGrootResidualPPO(unittest.TestCase):
         self.assertAlmostEqual(partial_metrics["opposed_grasp_episode_ever_rate"], 0.0)
         self.assertEqual(partial_env.full_reset_count, 2)
         self.assertTrue(any(mask[0] and not mask[1] for mask in partial_env.partial_reset_masks))
+
+    def test_evaluate_pure_dp_bypasses_actor_and_executes_exact_cached_row(self) -> None:
+        class NonCanonicalRotationDP(_FakeEvalDP):
+            def predict_action_from_condition(self, condition, *args, **kwargs):
+                chunk = super().predict_action_from_condition(condition, *args, **kwargs)
+                chunk[..., 3] = 2.0
+                chunk[..., 7] = 3.0
+                return chunk
+
+        env = _FakeMultiLaneEvalEnv((9,))
+        actor = _FakeEvalActor()
+        minimum, maximum = _physical_bounds()
+        callback_actions: list[tuple[torch.Tensor, torch.Tensor, torch.Tensor]] = []
+
+        def record_action(**kwargs):
+            callback_actions.append(
+                (kwargs["base_action"].clone(), kwargs["action"].clone(), kwargs["row_index"].clone())
+            )
+
+        metrics, _, _ = _evaluate(
+            env,
+            NonCanonicalRotationDP(),
+            scheduler=None,
+            actor_critic=actor,
+            action_min=minimum,
+            action_max=maximum,
+            state_min=torch.full((26,), -2.0),
+            state_max=torch.full((26,), 2.0),
+            hand_residual_scale=torch.full((10,), 0.1),
+            args=SimpleNamespace(
+                device="cpu",
+                seed=17,
+                num_envs=1,
+                inference_steps=1,
+                bfloat16=False,
+                position_residual_scale_m=0.015,
+                vertical_residual_scale_m=0.05,
+                rotation_residual_scale_deg=5.0,
+                hand_residual_scale_normalized=0.1,
+                max_episode_steps=9,
+            ),
+            episodes=1,
+            apply_residual=False,
+            step_callback=record_action,
+        )
+
+        self.assertEqual(actor.act_calls, 0)
+        self.assertTrue(actor.training)
+        self.assertEqual(len(callback_actions), 9)
+        self.assertEqual([int(item[2][0]) for item in callback_actions], [0, 1, 2, 3, 4, 5, 6, 7, 0])
+        for step, (base_action, action, _row) in enumerate(callback_actions):
+            self.assertTrue(torch.equal(action, base_action))
+            self.assertTrue(torch.equal(env.actions[step], base_action))
+            self.assertEqual(float(action[0, 3]), 2.0)
+            self.assertEqual(float(action[0, 7]), 3.0)
+        self.assertEqual(metrics["base_action_replan_lane_count"], 2.0)
+        self.assertEqual(metrics["vertical_residual_abs_m"], 0.0)
+
+        with self.assertRaisesRegex(ValueError, "actor_critic is required"):
+            _evaluate(
+                env,
+                _FakeEvalDP(),
+                scheduler=None,
+                actor_critic=None,
+                action_min=minimum,
+                action_max=maximum,
+                state_min=torch.full((26,), -2.0),
+                state_max=torch.full((26,), 2.0),
+                hand_residual_scale=torch.full((10,), 0.1),
+                args=SimpleNamespace(device="cpu", seed=17, num_envs=1),
+                episodes=1,
+            )
+
+    def test_evaluate_maps_unique_episode_noise_across_waves_and_records_results(self) -> None:
+        episodes = 5
+        num_envs = 3
+        env = _FakeMultiLaneEvalEnv((1, 2, 3))
+        frozen_dp = _FakeEvalDP()
+        actor = _FakeEvalActor()
+        args = SimpleNamespace(
+            device="cpu",
+            seed=17,
+            num_envs=num_envs,
+            inference_steps=1,
+            bfloat16=False,
+            position_residual_scale_m=0.015,
+            vertical_residual_scale_m=0.05,
+            rotation_residual_scale_deg=5.0,
+            hand_residual_scale_normalized=0.1,
+            max_episode_steps=3,
+        )
+        minimum, maximum = _physical_bounds()
+        noise = torch.arange(
+            episodes * _BASE_ACTION_HORIZON * 19,
+            dtype=torch.float32,
+        ).reshape(episodes, _BASE_ACTION_HORIZON, 19)
+        records: list[dict[str, object]] = []
+
+        metrics, _, _ = _evaluate(
+            env,
+            frozen_dp,
+            scheduler=None,
+            actor_critic=actor,
+            action_min=minimum,
+            action_max=maximum,
+            state_min=torch.full((26,), -2.0),
+            state_max=torch.full((26,), 2.0),
+            hand_residual_scale=torch.full((10,), 0.1),
+            args=args,
+            episodes=episodes,
+            episode_initial_noise=noise,
+            episode_records=records,
+        )
+
+        self.assertEqual(metrics["episodes"], float(episodes))
+        records.sort(key=lambda record: record["episode_id"])
+        self.assertEqual([record["episode_id"] for record in records], list(range(episodes)))
+        self.assertEqual([record["noise_index"] for record in records], list(range(episodes)))
+        self.assertEqual(len(frozen_dp.initial_noises), 2)
+        torch.testing.assert_close(frozen_dp.initial_noises[0], noise[:num_envs])
+        torch.testing.assert_close(frozen_dp.initial_noises[1], noise[num_envs:])
+        self.assertTrue(all(record["length"] >= 1 for record in records))
+        self.assertTrue(all(math.isfinite(record["return"]) for record in records))
+
+        with self.assertRaisesRegex(ValueError, "episode_initial_noise must have shape"):
+            _evaluate(
+                env,
+                frozen_dp,
+                scheduler=None,
+                actor_critic=actor,
+                action_min=minimum,
+                action_max=maximum,
+                state_min=torch.full((26,), -2.0),
+                state_max=torch.full((26,), 2.0),
+                hand_residual_scale=torch.full((10,), 0.1),
+                args=args,
+                episodes=episodes,
+                episode_initial_noise=noise[:-1],
+            )
+
+    def test_evaluate_reuses_episode_noise_when_a_chunk_is_replanned(self) -> None:
+        episodes = 2
+        env = _FakeMultiLaneEvalEnv((9, 1))
+        frozen_dp = _FakeEvalDP()
+        args = SimpleNamespace(
+            device="cpu",
+            seed=17,
+            num_envs=2,
+            inference_steps=1,
+            bfloat16=False,
+            position_residual_scale_m=0.015,
+            vertical_residual_scale_m=0.05,
+            rotation_residual_scale_deg=5.0,
+            hand_residual_scale_normalized=0.1,
+            max_episode_steps=9,
+        )
+        minimum, maximum = _physical_bounds()
+        noise = torch.randn(episodes, _BASE_ACTION_HORIZON, 19)
+
+        _evaluate(
+            env,
+            frozen_dp,
+            scheduler=None,
+            actor_critic=_FakeEvalActor(),
+            action_min=minimum,
+            action_max=maximum,
+            state_min=torch.full((26,), -2.0),
+            state_max=torch.full((26,), 2.0),
+            hand_residual_scale=torch.full((10,), 0.1),
+            args=args,
+            episodes=episodes,
+            episode_initial_noise=noise,
+        )
+
+        self.assertEqual(len(frozen_dp.initial_noises), 2)
+        torch.testing.assert_close(frozen_dp.initial_noises[0], noise)
+        torch.testing.assert_close(frozen_dp.initial_noises[1], noise[:1])
 
     def test_best_checkpoint_ranking_uses_fail_and_return_tiebreaks(self) -> None:
         baseline = {"success_rate": 0.0, "fail_rate": 0.2, "mean_return": 10.0}
